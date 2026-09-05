@@ -10,6 +10,7 @@ import {
   emptyPreEmploymentChecklist,
   emptyRequirements,
   getMissingCriticalItems,
+  defaultOnboardingChecklist,
   type Employee,
 } from "@/types";
 import { useNotifications } from "@/lib/notificationContext";
@@ -69,6 +70,7 @@ export default function EmployeesPage() {
       requirementsDeadline: addDaysISO(sentISO, 14),
       requirements: emptyRequirements(),
       preEmploymentChecklist: emptyPreEmploymentChecklist(),
+      onboardingChecklist: defaultOnboardingChecklist(),
       isRegular: false,
     });
     notify(`Employee added: "${name.trim()}"`, "created");

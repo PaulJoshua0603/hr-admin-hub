@@ -1,3 +1,5 @@
+import { v4 as uuidV4 } from "uuid";
+
 export type Task = {
   id: string;
   title: string;
@@ -284,6 +286,38 @@ export type OnboardingChecklistCategory = {
   title: string;
   items: OnboardingChecklistItem[];
 };
+
+export const DEFAULT_NOTES_TASK_LIST_ITEMS: string[] = [
+  "Print the List of Requirements",
+  "Print BDO Reference Sheet",
+  "Print BDO Endorsement Letter",
+  "Print Job Offer",
+  "Process HMO enrollment",
+  "Complete ER2 Form for PhilHealth",
+  "Prepare supplies for new hire (Black & Red Ballpens, Notebook, Correction Tape, ID Lace)",
+  "Prepare PowerPoint presentation for Onboarding",
+  "Issue Visitor Pass",
+  "Collect 2x2 Pic, 1x1 Pic, NBI Clearance, Medical Exam results, Payroll Number, ID No., and Biometrics No.",
+  "Remind employee to file Certificate of Attendance in Sprout (for \"Time In\" only)",
+  "Create Excel schedule/tracker for employee's onboarding week",
+  "Send onboarding email with Handbook, Employee Acknowledgement Form, Office Facilities Guide, and Safety Handbook",
+  "Add employee profile in Sprout",
+  "Upload/store files in the Shared Folder",
+];
+
+export function defaultOnboardingChecklist(): OnboardingChecklistCategory[] {
+  return [
+    {
+      id: uuidV4(),
+      title: "Notes / Task List",
+      items: DEFAULT_NOTES_TASK_LIST_ITEMS.map((label) => ({
+        id: uuidV4(),
+        label,
+        checked: false,
+      })),
+    },
+  ];
+}
 
 export type Employee = {
   id: string;

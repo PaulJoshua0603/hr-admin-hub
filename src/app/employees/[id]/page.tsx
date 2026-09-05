@@ -29,6 +29,7 @@ import {
   EMPLOYMENT_MILESTONE_REMINDER_OFFSETS,
   emptyMedicalExamChecklist,
   emptyPreEmploymentChecklist,
+  defaultOnboardingChecklist,
   MEDICAL_EXAM_CHECKLIST_LABELS,
   PRE_EMPLOYMENT_CHECKLIST_LABELS,
   REQUIREMENT_LABELS,
@@ -580,8 +581,9 @@ export default function EmployeeDetailPage({
               className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-accent disabled:cursor-not-allowed disabled:opacity-60"
             >
               <option value="">Select shift…</option>
-              <option value="6:30 AM - 3:30 PM">6:30 AM - 3:30 PM</option>
-              <option value="7:30 AM - 4:30 PM">7:30 AM - 4:30 PM</option>
+              <option value="6:30am – 3:00pm">6:30am – 3:00pm</option>
+              <option value="7:00am – 4:00pm">7:00am – 4:00pm</option>
+              <option value="7:30am – 4:30pm">7:30am – 4:30pm</option>
             </select>
           </FieldGroup>
         </div>
@@ -837,10 +839,7 @@ export default function EmployeeDetailPage({
 
         <Card>
           <div className="flex items-center justify-between gap-3 border-b border-border pb-3">
-            <div>
-              <h2 className="font-display text-lg text-ink">Onboarding Next Steps</h2>
-              <p className="mt-0.5 text-xs text-ink-muted">Post-submission checklist.</p>
-            </div>
+            <h2 className="font-display text-lg text-ink">Onboarding Next Steps</h2>
             <div className="flex items-center gap-2">
               <Pill tone={onboardingChecked === onboardingTotal ? "success" : "accent"}>
                 {onboardingChecked}/{onboardingTotal} done
@@ -848,6 +847,14 @@ export default function EmployeeDetailPage({
               <Button variant="ghost" onClick={() => setChecklistEditing((o) => !o)}>
                 {checklistEditing ? "Done editing" : "Edit checklist"}
               </Button>
+              {onboardingCategories.length === 0 && (
+                <Button
+                  variant="ghost"
+                  onClick={() => update(employee.id, { onboardingChecklist: defaultOnboardingChecklist() })}
+                >
+                  Load default checklist
+                </Button>
+              )}
             </div>
           </div>
 

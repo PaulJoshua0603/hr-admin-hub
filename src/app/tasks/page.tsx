@@ -9,6 +9,43 @@ import type { CalendarEvent, RecurrenceLabel, ReminderNote, Task } from "@/types
 import { REMINDER_NOTE_ID } from "@/types";
 import { useNotifications } from "@/lib/notificationContext";
 
+const HR_TASK_REFERENCE_TEMPLATE = `BDO Form
+- BDO reference sheet
+- Endorsement Letter
+- A1 - Customer Information
+- A3 - Signature Card
+- Back of A3
+- A4 - ATM Debit Card Form
+- Instruction Sheet page 1 & 2
+
+ER2 Sequence
+- Authorization Letter
+- Ms. Paula ID
+- Sir Dennis ID
+- ER2 Form 2 Copy
+- Philhealth Form
+- Birth Certificate
+
+Certificate of Employment (COE)
+- Print 2 copies colored
+- For signature to Ms. Paula & Ms. Lucia
+- Message applicant in MS Teams
+- Fill up the applicant Logbook for receiving
+
+Sick Leave
+- Email Clinic
+- File Leave Form
+- Attachment of Assessment of clinic nurse
+- Approved of your leave in Sprout
+
+Last Day
+- Put in Excel the day after the Last Day date
+- HMO Card
+- Company Equipments
+
+6th Month of Employee
+- Email Applicant CC: Ms. Paula`;
+
 export default function TasksAndRemindersPage() {
   return (
     <div>
@@ -500,6 +537,17 @@ function RemindersSection() {
         <div className="flex items-center gap-3">
           {savedAt && (
             <span className="text-xs text-ink-muted">Saved {formatDate(savedAt, "h:mm a")}</span>
+          )}
+          {!value.trim() && (
+            <Button
+              variant="ghost"
+              onClick={() => {
+                handleChange(HR_TASK_REFERENCE_TEMPLATE);
+                persist(HR_TASK_REFERENCE_TEMPLATE);
+              }}
+            >
+              Load HR task reference
+            </Button>
           )}
           <Button variant="ghost" onClick={openEventForm}>
             Add to Calendar
