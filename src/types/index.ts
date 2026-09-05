@@ -273,10 +273,16 @@ export const RESIGNED_STATUS_LABELS: Record<ResignedStatus, string> = {
   resigned: "Resigned",
 };
 
-export type CustomOnboardingItem = {
+export type OnboardingChecklistItem = {
   id: string;
   label: string;
   checked: boolean;
+};
+
+export type OnboardingChecklistCategory = {
+  id: string;
+  title: string;
+  items: OnboardingChecklistItem[];
 };
 
 export type Employee = {
@@ -294,7 +300,9 @@ export type Employee = {
   preEmploymentChecklist?: Record<PreEmploymentChecklistKey, boolean>;
   medicalExamChecklist?: Record<MedicalExamChecklistKey, boolean>;
   onboardingNextSteps?: Record<OnboardingNextStepKey, boolean>;
-  customOnboardingSteps?: CustomOnboardingItem[]; // user-added checklist items
+  onboardingStepLabelOverrides?: Partial<Record<OnboardingNextStepKey, string>>;
+  customOnboardingSteps?: OnboardingChecklistItem[]; // deprecated - replaced by onboardingChecklist
+  onboardingChecklist?: OnboardingChecklistCategory[]; // fully user-editable checklist (titles + items)
   sharedFolderNote?: string; // notes/link for the employee's shared folder
   isRegular: boolean; // stays Regular until manually changed
   resignedStatus?: ResignedStatus;

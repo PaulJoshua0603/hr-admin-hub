@@ -9,6 +9,7 @@ import {
   type MedicalExamChecklistKey,
 } from "@/types";
 import { formatDate } from "./dates";
+import { supabase, supabaseReady } from "./supabaseClient";
 
 function saveBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
@@ -54,13 +55,13 @@ export async function exportRequirementsListDocx(employee: Employee) {
       spacing: { after: 190, line: 300 },
     });
 
-  const fieldLine = (label: string, value: string, underline = false) =>
+  const fieldLine = (label: string, value: string, underline = false, before = 0) =>
     new Paragraph({
       children: [
         new TextRun({ text: `${label}: `, bold: true, size: BODY_SIZE, font: BODY_FONT }),
         new TextRun({ text: value || "________________________", size: BODY_SIZE, font: BODY_FONT }),
       ],
-      spacing: { after: underline ? 220 : 160 },
+      spacing: { before, after: underline ? 220 : 160 },
       border: underline
         ? {
             bottom: {
@@ -137,16 +138,16 @@ export async function exportRequirementsListDocx(employee: Employee) {
     checklistParagraph("Complete Requirements", isComplete),
     checklistParagraph("Incomplete Requirements", !isComplete),
     fieldLine("Remarks", remarksText),
-    fieldLine("Realcognita email issued", employee.realcognitaEmail || ""),
-    fieldLine("Biometrics number", employee.biometricsNo || ""),
-    fieldLine("ID number", employee.companyIdNumber || ""),
+    fieldLine("Realcognita email issued", employee.realcognitaEmail || "", false, 520),
+    fieldLine("Biometrics number", employee.biometricsNo || "", false, 400),
+    fieldLine("ID number", employee.companyIdNumber || "", false, 400),
     new Paragraph({
       children: [new TextRun({ text: "Checked By: _______________________", size: BODY_SIZE, font: BODY_FONT })],
-      spacing: { before: 360, after: 240 },
+      spacing: { before: 700, after: 320 },
     }),
     new Paragraph({
       children: [new TextRun({ text: "Date Checked: _______________________", size: BODY_SIZE, font: BODY_FONT })],
-      spacing: { before: 100 },
+      spacing: { before: 300 },
     }),
   ];
 
@@ -193,7 +194,7 @@ export async function exportRequirementsListDocx(employee: Employee) {
             rows: [
               new TableRow({
                 cantSplit: true,
-                height: { value: 12600, rule: HeightRule.ATLEAST },
+                height: { value: 13400, rule: HeightRule.ATLEAST },
                 children: [
                   new TableCell({
                     width: { size: 52, type: WidthType.PERCENTAGE },
@@ -223,31 +224,169 @@ export async function exportRequirementsListDocx(employee: Employee) {
   saveBlob(blob, `${employee.name} 201 Checklist.docx`);
 }
 
-export async function exportFolderNameDocx(employee: Employee) {
-  const { Document, Packer, Paragraph, TextRun, AlignmentType } = await import("docx");
+export async function exportContractOfEmploymentDocx(employee: Employee) {
+  let blob: Blob;
+  if (supabaseReady) {
+    const { data } = await supabase.storage
+      .from("files")
+      .download("templates/contract-of-employment.docx");
+    blob = data || (await fetch("/templates/contract-of-employment.docx").then((r) => r.blob()));
+  } else {
+    blob = await fetch("/templates/contract-of-employment.docx").then((r) => r.blob());
+  }
+  saveBlob(blob, `${employee.name} Contract of Employment.docx`);
+}
 
-  const nameCaps = employee.name.toUpperCase();
+export async function uploadContractTemplate(file: File) {
+  if (!supabaseReady) return { error: "Connect Supabase to host a custom template." };
+  const { error } = await supabase.storage
+    .from("files")
+    .upload("templates/contract-of-employment.docx", file, { upsert: true });
+  return { error: error?.message || null };
+}
+
+export async function exportEndorsementLetterDocx(employee: Employee) {
+  const { Document, Packer, Paragraph, TextRun, AlignmentType, ImageRun, TextWrappingType } = await import("docx");
+
+  const FONT = "Arial";
+  const SIZE = 20; // 10pt, matches the source template
+  const dateText = employee.dateHired ? formatDate(employee.dateHired, "MMMM d, yyyy") : "";
+
+  const bold = (text: string, extra: Partial<{ size: number }> = {}) =>
+    new TextRun({ text, bold: true, font: FONT, size: extra.size || SIZE });
+  const plain = (text: string) => new TextRun({ text, font: FONT, size: SIZE });
+
+  const letterheadBuffer = await fetch("/letterhead-realcognita.png").then((r) => r.arrayBuffer());
+  const letterheadImage = new ImageRun({
+    type: "png",
+    data: letterheadBuffer,
+    transformation: { width: 816, height: 1056 },
+    floating: {
+      horizontalPosition: { relative: "page", offset: 0 },
+      verticalPosition: { relative: "page", offset: 0 },
+      behindDocument: true,
+      wrap: { type: TextWrappingType.NONE },
+      allowOverlap: true,
+    },
+  });
 
   const doc = new Document({
+    numbering: {
+      config: [
+        {
+          reference: "endorsement-list",
+          levels: [
+            {
+              level: 0,
+              format: "decimal",
+              text: "%1.",
+              alignment: AlignmentType.START,
+              style: { paragraph: { indent: { left: 540, hanging: 300 } } },
+            },
+          ],
+        },
+      ],
+    },
     sections: [
       {
+        properties: {
+          page: { margin: { top: 3300, right: 1080, bottom: 1440, left: 1080 } },
+        },
         children: [
           new Paragraph({
             alignment: AlignmentType.CENTER,
-            spacing: { before: 3600 },
-            children: [
-              new TextRun({
-                text: nameCaps,
-                bold: true,
-                size: 96,
-              }),
-            ],
+            spacing: { after: 320 },
+            children: [letterheadImage, bold("ENDORSEMENT LETTER", { size: 24 })],
           }),
+          new Paragraph({
+            children: [bold(`Date: ${dateText}`)],
+            spacing: { after: 260 },
+          }),
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            children: [bold("OPENING OF PAYROLL ACCOUNTS FOR EMPLOYEES OF")],
+          }),
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            children: [bold("Realcognita Inc. ")],
+            spacing: { after: 120 },
+          }),
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            children: [
+              bold("___________________________________________________________________"),
+            ],
+            spacing: { after: 320 },
+          }),
+          new Paragraph({
+            children: [plain("Dear Branch Manager Mr. Paul D. Joseph")],
+            spacing: { after: 240 },
+          }),
+          new Paragraph({
+            children: [
+              plain("Please be advised that "),
+              bold("Realcognita Inc."),
+              plain(" has an existing payroll arrangement with BDO "),
+              bold("University Parkway"),
+              plain(" branch."),
+            ],
+            spacing: { after: 240 },
+          }),
+          new Paragraph({
+            children: [
+              plain("In view thereof, kindly assist the bearer of this letter as an employee of "),
+              bold("Realcognita Inc."),
+              plain(" who shall open a payroll account with your branch."),
+            ],
+            spacing: { after: 280 },
+          }),
+          new Paragraph({
+            children: [plain("EMPLOYEE\u2019S NAME:\t"), plain(employee.name || "")],
+            spacing: { after: 80 },
+          }),
+          new Paragraph({
+            children: [plain("EMPLOYEE NUMBER:\t"), plain(employee.companyIdNumber || "")],
+            spacing: { after: 280 },
+          }),
+          new Paragraph({
+            children: [
+              bold("Realcognita Inc."),
+              plain(" employee should present the following along with this endorsement letter:"),
+            ],
+            spacing: { after: 140 },
+          }),
+          new Paragraph({
+            numbering: { reference: "endorsement-list", level: 0 },
+            children: [plain("Valid ID (follow existing policy)")],
+            spacing: { after: 260 },
+          }),
+          new Paragraph({
+            children: [
+              plain(
+                "Kindly ensure that the above-mentioned account opening requirement is submitted.  For any inquiries/clarifications, you may call Branch Head/Marketing Officer of "
+              ),
+              bold("University Parkway"),
+              plain(" branch at tel no. "),
+              bold("(02) 403-8158."),
+            ],
+            spacing: { after: 280 },
+          }),
+          new Paragraph({
+            children: [plain("Thank you very much.")],
+            spacing: { after: 700 },
+          }),
+          new Paragraph({
+            children: [plain("_________________________________________")],
+            spacing: { after: 60 },
+          }),
+          new Paragraph({ children: [bold("Joanne D. Ortuoste")], spacing: { after: 40 } }),
+          new Paragraph({ children: [bold("VP \u2013 Finance & Administration")], spacing: { after: 40 } }),
+          new Paragraph({ children: [bold("Realcognita Inc.")] }),
         ],
       },
     ],
   });
 
   const blob = await Packer.toBlob(doc);
-  saveBlob(blob, `${nameCaps} - Folder Name.docx`);
+  saveBlob(blob, `${employee.name} Endorsement Letter.docx`);
 }

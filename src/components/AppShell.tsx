@@ -26,21 +26,34 @@ function HeaderClock() {
 
   useEffect(() => {
     setNow(new Date());
-    const id = setInterval(() => setNow(new Date()), 1000 * 30);
+    const id = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
 
   if (!now) return null;
 
-  const dateStr = now.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  const timeStr = now.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const weekdayStr = now.toLocaleDateString(undefined, { weekday: "long" });
+  const dateStr = now.toLocaleDateString(undefined, {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
+  const timeStr = now.toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  });
 
   return (
-    <div className="hidden shrink-0 items-center gap-2 rounded-full border border-border bg-background px-3 py-1.5 lg:flex">
-      <ClockIcon size={14} className="text-accent" />
+    <div className="hidden shrink-0 items-center gap-2.5 rounded-xl border border-border bg-background px-3.5 py-2 lg:flex">
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent-soft">
+        <ClockIcon size={15} className="text-accent" />
+      </span>
       <div className="flex flex-col leading-tight">
-        <span className="text-sm font-semibold text-ink">{timeStr}</span>
-        <span className="text-[10px] text-ink-muted">{dateStr}</span>
+        <span className="font-mono text-sm font-semibold tabular-nums text-ink">{timeStr}</span>
+        <span className="text-[11px] text-ink-muted">
+          {weekdayStr}, {dateStr}
+        </span>
       </div>
     </div>
   );

@@ -6,7 +6,12 @@ import { v4 as uuid } from "uuid";
 import { useSupabaseStore } from "@/lib/useSupabaseStore";
 import { useNotifications } from "@/lib/notificationContext";
 import { addDaysISO, addMonthsISO, daysSince, formatDate, isOverdue, nextMondayISO, todayISO } from "@/lib/dates";
-import { exportFolderNameDocx, exportRequirementsListDocx } from "@/lib/docExport";
+import {
+  exportContractOfEmploymentDocx,
+  exportEndorsementLetterDocx,
+  exportRequirementsListDocx,
+  uploadContractTemplate,
+} from "@/lib/docExport";
 import {
   Button,
   Card,
@@ -23,22 +28,18 @@ import {
   EMPLOYMENT_MILESTONE_LABELS,
   EMPLOYMENT_MILESTONE_REMINDER_OFFSETS,
   emptyMedicalExamChecklist,
-  emptyOnboardingNextSteps,
   emptyPreEmploymentChecklist,
   MEDICAL_EXAM_CHECKLIST_LABELS,
-  ONBOARDING_NEXT_STEPS_CATEGORIES,
-  ONBOARDING_NEXT_STEPS_LABELS,
   PRE_EMPLOYMENT_CHECKLIST_LABELS,
   REQUIREMENT_LABELS,
   REQUIREMENT_STATUS_LABELS,
   RESIGNED_STATUS_LABELS,
   getLackingRequirements,
   getMissingCriticalItems,
-  type CustomOnboardingItem,
   type Employee,
   type EmploymentMilestoneKey,
   type MedicalExamChecklistKey,
-  type OnboardingNextStepKey,
+  type OnboardingChecklistCategory,
   type PreEmploymentChecklistKey,
   type RequirementKey,
   type RequirementStatus,
@@ -91,10 +92,8 @@ export default function EmployeeDetailPage({
   const [checklistOpen, setChecklistOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [checklistEditing, setChecklistEditing] = useState(false);
-  const [newChecklistLabel, setNewChecklistLabel] = useState("");
-  const [sharedFolderNoteInput, setSharedFolderNoteInput] = useState(
-    employee?.sharedFolderNote || ""
-  );
+  const [newItemLabels, setNewItemLabels] = useState<Record<string, string>>({});
+  const [newCategoryTitle, setNewCategoryTitle] = useState("");
   const { notify } = useNotifications();
 
   // useState initial values above only run once, before hydration finishes,
@@ -112,7 +111,6 @@ export default function EmployeeDetailPage({
         ? employee.dateAdded.slice(0, 10)
         : ""
     );
-    setSharedFolderNoteInput(employee.sharedFolderNote || "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hydrated, employee?.id]);
 
@@ -292,36 +290,76 @@ export default function EmployeeDetailPage({
     );
   }
 
-  function saveSharedFolderNote() {
-    update(employee!.id, { sharedFolderNote: sharedFolderNoteInput });
-    notify(`${employee!.name} — shared folder note saved`, "updated");
-  }
 
-  function addCustomChecklistItem() {
-    if (!newChecklistLabel.trim()) return;
-    const current = employee!.customOnboardingSteps || [];
-    const item: CustomOnboardingItem = {
+
+  function addCategory() {
+    if (!newCategoryTitle.trim()) return;
+    const current = employee!.onboardingChecklist || [];
+    const category: OnboardingChecklistCategory = {
       id: uuid(),
-      label: newChecklistLabel.trim(),
-      checked: false,
+      title: newCategoryTitle.trim(),
+      items: [],
     };
-    update(employee!.id, { customOnboardingSteps: [...current, item] });
-    setNewChecklistLabel("");
+    update(employee!.id, { onboardingChecklist: [...current, category] });
+    setNewCategoryTitle("");
   }
 
-  function toggleCustomChecklistItem(itemId: string, checked: boolean) {
-    const current = employee!.customOnboardingSteps || [];
+  function setCategoryTitle(catId: string, title: string) {
+    const current = employee!.onboardingChecklist || [];
     update(employee!.id, {
-      customOnboardingSteps: current.map((it) =>
-        it.id === itemId ? { ...it, checked } : it
+      onboardingChecklist: current.map((c) => (c.id === catId ? { ...c, title } : c)),
+    });
+  }
+
+  function removeCategory(catId: string) {
+    const current = employee!.onboardingChecklist || [];
+    update(employee!.id, {
+      onboardingChecklist: current.filter((c) => c.id !== catId),
+    });
+  }
+
+  function addItem(catId: string) {
+    const label = (newItemLabels[catId] || "").trim();
+    if (!label) return;
+    const current = employee!.onboardingChecklist || [];
+    update(employee!.id, {
+      onboardingChecklist: current.map((c) =>
+        c.id === catId
+          ? { ...c, items: [...c.items, { id: uuid(), label, checked: false }] }
+          : c
+      ),
+    });
+    setNewItemLabels((prev) => ({ ...prev, [catId]: "" }));
+  }
+
+  function setItemLabel(catId: string, itemId: string, label: string) {
+    const current = employee!.onboardingChecklist || [];
+    update(employee!.id, {
+      onboardingChecklist: current.map((c) =>
+        c.id === catId
+          ? { ...c, items: c.items.map((it) => (it.id === itemId ? { ...it, label } : it)) }
+          : c
       ),
     });
   }
 
-  function removeCustomChecklistItem(itemId: string) {
-    const current = employee!.customOnboardingSteps || [];
+  function toggleItem(catId: string, itemId: string, checked: boolean) {
+    const current = employee!.onboardingChecklist || [];
     update(employee!.id, {
-      customOnboardingSteps: current.filter((it) => it.id !== itemId),
+      onboardingChecklist: current.map((c) =>
+        c.id === catId
+          ? { ...c, items: c.items.map((it) => (it.id === itemId ? { ...it, checked } : it)) }
+          : c
+      ),
+    });
+  }
+
+  function removeItem(catId: string, itemId: string) {
+    const current = employee!.onboardingChecklist || [];
+    update(employee!.id, {
+      onboardingChecklist: current.map((c) =>
+        c.id === catId ? { ...c, items: c.items.filter((it) => it.id !== itemId) } : c
+      ),
     });
   }
 
@@ -355,13 +393,6 @@ export default function EmployeeDetailPage({
     });
   }
 
-  function setOnboardingStepItem(key: OnboardingNextStepKey, checked: boolean) {
-    const current = employee!.onboardingNextSteps || emptyOnboardingNextSteps();
-    update(employee!.id, {
-      onboardingNextSteps: { ...current, [key]: checked },
-    });
-  }
-
   const milestones = employee.dateHired
     ? (Object.keys(EMPLOYMENT_MILESTONE_LABELS) as EmploymentMilestoneKey[]).map((key) => ({
         key,
@@ -375,11 +406,10 @@ export default function EmployeeDetailPage({
   ).length;
   const totalCount = Object.keys(employee.requirements).length;
 
-  const customChecklist = employee.customOnboardingSteps || [];
-  const onboardingChecked =
-    Object.values(employee.onboardingNextSteps || emptyOnboardingNextSteps()).filter(Boolean)
-      .length + customChecklist.filter((it) => it.checked).length;
-  const onboardingTotal = Object.keys(emptyOnboardingNextSteps()).length + customChecklist.length;
+  const onboardingCategories = employee.onboardingChecklist || [];
+  const onboardingAllItems = onboardingCategories.flatMap((c) => c.items);
+  const onboardingChecked = onboardingAllItems.filter((it) => it.checked).length;
+  const onboardingTotal = onboardingAllItems.length;
 
   const lackingRequirements = getLackingRequirements(employee);
   const missingCritical = getMissingCriticalItems(employee);
@@ -469,33 +499,36 @@ export default function EmployeeDetailPage({
 
       <Card className="mb-6">
         <h2 className="font-display text-lg text-ink">Compensation</h2>
-        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <FieldGroup label="Basic Salary">
-            <Input
-              type="text"
-              inputMode="decimal"
-              value={employee.basicSalary || ""}
-              disabled={!isEditing}
-              onChange={(e) => update(employee.id, { basicSalary: e.target.value })}
-            />
+            <div className="relative">
+              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-ink-muted">
+                ₱
+              </span>
+              <Input
+                type="text"
+                inputMode="decimal"
+                className="pl-7"
+                value={employee.basicSalary || ""}
+                disabled={!isEditing}
+                onChange={(e) => update(employee.id, { basicSalary: e.target.value })}
+              />
+            </div>
           </FieldGroup>
           <FieldGroup label="Total Monthly Gross Compensation Income">
-            <Input
-              type="text"
-              inputMode="decimal"
-              value={employee.totalMonthlyGrossCompensation || ""}
-              disabled={!isEditing}
-              onChange={(e) => update(employee.id, { totalMonthlyGrossCompensation: e.target.value })}
-            />
-          </FieldGroup>
-          <FieldGroup label="Basic Gross Salary">
-            <Input
-              type="text"
-              inputMode="decimal"
-              value={employee.basicGrossSalary || ""}
-              disabled={!isEditing}
-              onChange={(e) => update(employee.id, { basicGrossSalary: e.target.value })}
-            />
+            <div className="relative">
+              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-ink-muted">
+                ₱
+              </span>
+              <Input
+                type="text"
+                inputMode="decimal"
+                className="pl-7"
+                value={employee.totalMonthlyGrossCompensation || ""}
+                disabled={!isEditing}
+                onChange={(e) => update(employee.id, { totalMonthlyGrossCompensation: e.target.value })}
+              />
+            </div>
           </FieldGroup>
         </div>
       </Card>
@@ -540,12 +573,16 @@ export default function EmployeeDetailPage({
             />
           </FieldGroup>
           <FieldGroup label="Working Hours">
-            <Input
-              placeholder="e.g. 8:00 AM - 5:00 PM"
+            <select
               value={employee.workingHours || ""}
               disabled={!isEditing}
               onChange={(e) => update(employee.id, { workingHours: e.target.value })}
-            />
+              className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-accent disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <option value="">Select shift…</option>
+              <option value="6:30 AM - 3:30 PM">6:30 AM - 3:30 PM</option>
+              <option value="7:30 AM - 4:30 PM">7:30 AM - 4:30 PM</option>
+            </select>
           </FieldGroup>
         </div>
       </Card>
@@ -818,93 +855,144 @@ export default function EmployeeDetailPage({
             <Button variant="ghost" onClick={() => exportRequirementsListDocx(employee)}>
               Download Employee 201 File Checklist (Word)
             </Button>
-            <Button variant="ghost" onClick={() => exportFolderNameDocx(employee)}>
-              Download Folder Name (Word)
+            <Button variant="ghost" onClick={() => exportEndorsementLetterDocx(employee)}>
+              Download Endorsement Letter (Word)
+            </Button>
+            <Button variant="ghost" onClick={() => exportContractOfEmploymentDocx(employee)}>
+              Download Contract of Employment (Word)
             </Button>
           </div>
 
-          <div className="mt-4 rounded-md border border-border p-3">
-            <FieldGroup label="Shared Folder — Notes / Link">
-              <Textarea
-                rows={2}
-                placeholder="Paste shared drive link or notes about where files are stored"
-                value={sharedFolderNoteInput}
-                disabled={!isEditing}
-                onChange={(e) => setSharedFolderNoteInput(e.target.value)}
+          <div className="mt-3 flex items-center gap-2">
+            <label className="cursor-pointer text-xs text-ink-muted underline hover:text-accent">
+              Upload/replace Contract of Employment template
+              <input
+                type="file"
+                accept=".docx"
+                className="hidden"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const { error } = await uploadContractTemplate(file);
+                  if (error) {
+                    notify(`Template upload failed: ${error}`, "warn");
+                  } else {
+                    notify("Contract of Employment template updated", "updated");
+                  }
+                  e.target.value = "";
+                }}
               />
-              <Button variant="ghost" disabled={!isEditing} onClick={saveSharedFolderNote}>
-                Save
-              </Button>
-            </FieldGroup>
+            </label>
           </div>
 
           <div className="mt-4 flex flex-col gap-5">
-            {ONBOARDING_NEXT_STEPS_CATEGORIES.map((cat) => (
-              <div key={cat.category}>
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-accent">
-                  {cat.category}
-                </h3>
-                <div className="mt-2 flex flex-col gap-0.5">
-                  {cat.keys.map((key) => {
-                    const checked = employee.onboardingNextSteps?.[key] || false;
-                    return (
-                      <Checkbox
-                        key={key}
-                        checked={checked}
-                        disabled={!isEditing}
-                        onChange={(c) => setOnboardingStepItem(key, c)}
-                        label={ONBOARDING_NEXT_STEPS_LABELS[key]}
-                      />
-                    );
-                  })}
+            {onboardingCategories.length === 0 && (
+              <p className="rounded-md border border-dashed border-border p-4 text-center text-sm text-ink-muted">
+                Nothing added yet. Click &quot;Edit checklist&quot; to add your own sections and items.
+              </p>
+            )}
+
+            {onboardingCategories.map((cat) => (
+              <div key={cat.id} className="rounded-md border border-border p-3">
+                <div className="mb-2 flex items-center justify-between gap-2 border-b border-border pb-2">
+                  {checklistEditing ? (
+                    <Input
+                      className="flex-1"
+                      value={cat.title}
+                      disabled={!isEditing}
+                      onChange={(e) => setCategoryTitle(cat.id, e.target.value)}
+                    />
+                  ) : (
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-accent">
+                      {cat.title}
+                    </h3>
+                  )}
+                  {checklistEditing && (
+                    <button
+                      type="button"
+                      onClick={() => removeCategory(cat.id)}
+                      className="shrink-0 text-xs text-warn hover:underline"
+                    >
+                      Remove section
+                    </button>
+                  )}
                 </div>
+
+                <div className="flex flex-col gap-0.5">
+                  {cat.items.length === 0 && !checklistEditing && (
+                    <p className="text-xs text-ink-muted">No items yet.</p>
+                  )}
+                  {cat.items.map((item) => (
+                    <div key={item.id} className="flex items-center justify-between gap-2">
+                      {checklistEditing ? (
+                        <>
+                          <Checkbox
+                            checked={item.checked}
+                            disabled={!isEditing}
+                            onChange={(c) => toggleItem(cat.id, item.id, c)}
+                            label=""
+                          />
+                          <Input
+                            className="flex-1"
+                            value={item.label}
+                            disabled={!isEditing}
+                            onChange={(e) => setItemLabel(cat.id, item.id, e.target.value)}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => removeItem(cat.id, item.id)}
+                            className="shrink-0 text-xs text-warn hover:underline"
+                          >
+                            Remove
+                          </button>
+                        </>
+                      ) : (
+                        <Checkbox
+                          checked={item.checked}
+                          disabled={!isEditing}
+                          onChange={(c) => toggleItem(cat.id, item.id, c)}
+                          label={item.label}
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                {checklistEditing && (
+                  <div className="mt-3 flex items-center gap-2">
+                    <Input
+                      placeholder="Add item"
+                      value={newItemLabels[cat.id] || ""}
+                      onChange={(e) =>
+                        setNewItemLabels((prev) => ({ ...prev, [cat.id]: e.target.value }))
+                      }
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") addItem(cat.id);
+                      }}
+                    />
+                    <Button variant="ghost" onClick={() => addItem(cat.id)}>
+                      Add
+                    </Button>
+                  </div>
+                )}
               </div>
             ))}
 
-            <div>
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-accent">
-                Custom Items
-              </h3>
-              <div className="mt-2 flex flex-col gap-0.5">
-                {customChecklist.length === 0 && !checklistEditing && (
-                  <p className="text-xs text-ink-muted">No custom items yet.</p>
-                )}
-                {customChecklist.map((item) => (
-                  <div key={item.id} className="flex items-center justify-between gap-2">
-                    <Checkbox
-                      checked={item.checked}
-                      disabled={!isEditing}
-                      onChange={(c) => toggleCustomChecklistItem(item.id, c)}
-                      label={item.label}
-                    />
-                    {checklistEditing && (
-                      <button
-                        type="button"
-                        onClick={() => removeCustomChecklistItem(item.id)}
-                        className="text-xs text-warn hover:underline"
-                      >
-                        Remove
-                      </button>
-                    )}
-                  </div>
-                ))}
+            {checklistEditing && (
+              <div className="flex items-center gap-2 rounded-md border border-dashed border-border p-3">
+                <Input
+                  placeholder="New section title, e.g. Docs & Filing"
+                  value={newCategoryTitle}
+                  onChange={(e) => setNewCategoryTitle(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") addCategory();
+                  }}
+                />
+                <Button variant="ghost" onClick={addCategory}>
+                  + Add section
+                </Button>
               </div>
-              {checklistEditing && (
-                <div className="mt-3 flex items-center gap-2">
-                  <Input
-                    placeholder="Add a checklist item"
-                    value={newChecklistLabel}
-                    onChange={(e) => setNewChecklistLabel(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") addCustomChecklistItem();
-                    }}
-                  />
-                  <Button variant="ghost" onClick={addCustomChecklistItem}>
-                    Add
-                  </Button>
-                </div>
-              )}
-            </div>
+            )}
           </div>
         </Card>
       </div>
