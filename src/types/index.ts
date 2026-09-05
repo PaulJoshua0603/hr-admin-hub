@@ -303,6 +303,18 @@ export type Employee = {
   lastDay?: string; // ISO date - offboarding last day
   lastPayDate?: string; // ISO date - auto-calculated as lastDay + 35 days (editable)
   milestoneRemindersSentAt?: string; // ISO - last time milestone reminders were generated
+  requirementsCompletedAt?: string; // ISO - auto-set the moment requirements status becomes complete
+  // Compensation
+  basicSalary?: string;
+  totalMonthlyGrossCompensation?: string;
+  basicGrossSalary?: string;
+  // Identification & profile
+  philhealthNo?: string;
+  companyIdNumber?: string;
+  biometricsNo?: string;
+  realcognitaEmail?: string;
+  homeAddress?: string;
+  workingHours?: string;
 };
 
 export const REQUIREMENT_LABELS: Record<RequirementKey, string> = {

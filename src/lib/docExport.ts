@@ -137,10 +137,12 @@ export async function exportRequirementsListDocx(employee: Employee) {
     checklistParagraph("Complete Requirements", isComplete),
     checklistParagraph("Incomplete Requirements", !isComplete),
     fieldLine("Remarks", remarksText),
-    new Paragraph({ text: "", spacing: { before: 700 } }),
+    fieldLine("Realcognita email issued", employee.realcognitaEmail || ""),
+    fieldLine("Biometrics number", employee.biometricsNo || ""),
+    fieldLine("ID number", employee.companyIdNumber || ""),
     new Paragraph({
       children: [new TextRun({ text: "Checked By: _______________________", size: BODY_SIZE, font: BODY_FONT })],
-      spacing: { before: 300, after: 240 },
+      spacing: { before: 360, after: 240 },
     }),
     new Paragraph({
       children: [new TextRun({ text: "Date Checked: _______________________", size: BODY_SIZE, font: BODY_FONT })],
@@ -190,7 +192,8 @@ export async function exportRequirementsListDocx(employee: Employee) {
             },
             rows: [
               new TableRow({
-                height: { value: 14200, rule: HeightRule.ATLEAST },
+                cantSplit: true,
+                height: { value: 12600, rule: HeightRule.ATLEAST },
                 children: [
                   new TableCell({
                     width: { size: 52, type: WidthType.PERCENTAGE },
@@ -217,7 +220,7 @@ export async function exportRequirementsListDocx(employee: Employee) {
   });
 
   const blob = await Packer.toBlob(doc);
-  saveBlob(blob, `${employee.name} - Employee 201 File Checklist.docx`);
+  saveBlob(blob, `${employee.name} 201 Checklist.docx`);
 }
 
 export async function exportFolderNameDocx(employee: Employee) {

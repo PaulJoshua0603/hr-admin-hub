@@ -5,7 +5,7 @@ import Link from "next/link";
 import { v4 as uuid } from "uuid";
 import { useSupabaseStore } from "@/lib/useSupabaseStore";
 import { useNotifications } from "@/lib/notificationContext";
-import { addDaysISO, addMonthsISO, formatDate, isOverdue, nextMondayISO, todayISO } from "@/lib/dates";
+import { addDaysISO, addMonthsISO, daysSince, formatDate, isOverdue, nextMondayISO, todayISO } from "@/lib/dates";
 import { exportFolderNameDocx, exportRequirementsListDocx } from "@/lib/docExport";
 import {
   Button,
@@ -190,6 +190,9 @@ export default function EmployeeDetailPage({
         (acc, k) => ({ ...acc, [k]: true }),
         {} as Record<MedicalExamChecklistKey, boolean>
       );
+      patch.requirementsCompletedAt = todayISO();
+    } else {
+      patch.requirementsCompletedAt = undefined;
     }
     update(employee!.id, patch);
     notify(
@@ -464,6 +467,89 @@ export default function EmployeeDetailPage({
         )}
       </Card>
 
+      <Card className="mb-6">
+        <h2 className="font-display text-lg text-ink">Compensation</h2>
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <FieldGroup label="Basic Salary">
+            <Input
+              type="text"
+              inputMode="decimal"
+              value={employee.basicSalary || ""}
+              disabled={!isEditing}
+              onChange={(e) => update(employee.id, { basicSalary: e.target.value })}
+            />
+          </FieldGroup>
+          <FieldGroup label="Total Monthly Gross Compensation Income">
+            <Input
+              type="text"
+              inputMode="decimal"
+              value={employee.totalMonthlyGrossCompensation || ""}
+              disabled={!isEditing}
+              onChange={(e) => update(employee.id, { totalMonthlyGrossCompensation: e.target.value })}
+            />
+          </FieldGroup>
+          <FieldGroup label="Basic Gross Salary">
+            <Input
+              type="text"
+              inputMode="decimal"
+              value={employee.basicGrossSalary || ""}
+              disabled={!isEditing}
+              onChange={(e) => update(employee.id, { basicGrossSalary: e.target.value })}
+            />
+          </FieldGroup>
+        </div>
+      </Card>
+
+      <Card className="mb-6">
+        <h2 className="font-display text-lg text-ink">Identification & Profile</h2>
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <FieldGroup label="PhilHealth No.">
+            <Input
+              value={employee.philhealthNo || ""}
+              disabled={!isEditing}
+              onChange={(e) => update(employee.id, { philhealthNo: e.target.value })}
+            />
+          </FieldGroup>
+          <FieldGroup label="ID Number (Company ID)">
+            <Input
+              value={employee.companyIdNumber || ""}
+              disabled={!isEditing}
+              onChange={(e) => update(employee.id, { companyIdNumber: e.target.value })}
+            />
+          </FieldGroup>
+          <FieldGroup label="Biometrics No.">
+            <Input
+              value={employee.biometricsNo || ""}
+              disabled={!isEditing}
+              onChange={(e) => update(employee.id, { biometricsNo: e.target.value })}
+            />
+          </FieldGroup>
+          <FieldGroup label="Realcognita Issued Email">
+            <Input
+              type="email"
+              value={employee.realcognitaEmail || ""}
+              disabled={!isEditing}
+              onChange={(e) => update(employee.id, { realcognitaEmail: e.target.value })}
+            />
+          </FieldGroup>
+          <FieldGroup label="Home Address">
+            <Input
+              value={employee.homeAddress || ""}
+              disabled={!isEditing}
+              onChange={(e) => update(employee.id, { homeAddress: e.target.value })}
+            />
+          </FieldGroup>
+          <FieldGroup label="Working Hours">
+            <Input
+              placeholder="e.g. 8:00 AM - 5:00 PM"
+              value={employee.workingHours || ""}
+              disabled={!isEditing}
+              onChange={(e) => update(employee.id, { workingHours: e.target.value })}
+            />
+          </FieldGroup>
+        </div>
+      </Card>
+
       <div className="mb-6 grid grid-cols-1 items-start gap-6 lg:grid-cols-2">
         <div className="flex flex-col gap-6">
         <Card>
@@ -475,37 +561,7 @@ export default function EmployeeDetailPage({
           </div>
 
           <div className="mt-4 rounded-md bg-background p-3">
-            <p className="text-xs text-ink-muted">
-              Date Requirements Sent:{" "}
-              <span className="font-medium text-ink">
-                {formatDate(employee.dateRequirementsSent || employee.dateAdded, "MMMM d, yyyy")}
-              </span>
-            </p>
-            <p className="mt-1 text-xs text-ink-muted">
-              Requirements Due:{" "}
-              <span className="font-medium text-ink">
-                {formatDate(employee.requirementsDeadline, "MMMM d, yyyy")}
-              </span>
-            </p>
-            <p className="mt-1 text-xs text-ink-muted">
-              Hired/Onboarding Date:{" "}
-              <span className="font-medium text-ink">
-                {employee.dateHired ? formatDate(employee.dateHired, "MMMM d, yyyy") : "—"}
-              </span>
-            </p>
-            {requirementCompletionDeadline && (
-              <p className="mt-1 text-xs text-ink-muted">
-                Completion target from onboarding date:{" "}
-                <span
-                  className={`font-medium ${
-                    isOverdue(requirementCompletionDeadline) ? "text-warn" : "text-ink"
-                  }`}
-                >
-                  {formatDate(requirementCompletionDeadline, "MMMM d, yyyy")}
-                </span>
-              </p>
-            )}
-            <div className="mt-3 flex flex-wrap items-end gap-3">
+            <div className="flex flex-wrap items-end gap-3">
               <FieldGroup label="Date MC sent pre-employment requirements">
                 <Input
                   type="date"
@@ -515,9 +571,47 @@ export default function EmployeeDetailPage({
                 />
               </FieldGroup>
             </div>
-            <p className="mt-2 text-xs text-ink-muted">
-              Deadline auto-fills to 2 weeks after this date.
-            </p>
+
+            {employee.dateRequirementsSent && (
+              <div className="mt-3 flex flex-col gap-1">
+                <p className="text-xs text-ink-muted">
+                  Deadline (auto, +14 days):{" "}
+                  <span
+                    className={`font-medium ${
+                      completeCount !== totalCount && isOverdue(employee.requirementsDeadline)
+                        ? "text-warn"
+                        : "text-ink"
+                    }`}
+                  >
+                    {formatDate(employee.requirementsDeadline, "MMMM d, yyyy")}
+                  </span>
+                </p>
+                <p className="text-xs text-ink-muted">
+                  Turnaround:{" "}
+                  {completeCount === totalCount && employee.requirementsCompletedAt ? (
+                    <span className="font-medium text-success">
+                      Completed in {daysSince(employee.dateRequirementsSent)} day
+                      {daysSince(employee.dateRequirementsSent) === 1 ? "" : "s"} (
+                      {formatDate(employee.requirementsCompletedAt, "MMM d, yyyy")})
+                    </span>
+                  ) : (
+                    <span className="font-medium text-warn">
+                      {daysSince(employee.dateRequirementsSent)} day
+                      {daysSince(employee.dateRequirementsSent) === 1 ? "" : "s"} elapsed, still
+                      incomplete
+                    </span>
+                  )}
+                </p>
+                {completeCount !== totalCount && (
+                  <p className="text-xs text-warn">
+                    Lacking:{" "}
+                    {employee.requirementNotes?.listOfRequirements ||
+                      employee.requirementNotes?.preEmploymentMedical ||
+                      "Not specified yet"}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="mt-4 flex flex-col gap-3">
