@@ -217,6 +217,28 @@ h1, h2, h3, .font-display {
   transform-origin: left;
 }
 
+@keyframes bell-ring {
+  0%, 100% { transform: rotate(0deg); }
+  15% { transform: rotate(14deg); }
+  30% { transform: rotate(-12deg); }
+  45% { transform: rotate(8deg); }
+  60% { transform: rotate(-6deg); }
+  75% { transform: rotate(3deg); }
+}
+.animate-bell-ring {
+  animation: bell-ring 0.6s ease-in-out;
+  transform-origin: top center;
+}
+
+@keyframes badge-pop {
+  0% { transform: scale(0.5); opacity: 0; }
+  60% { transform: scale(1.25); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.animate-badge-pop {
+  animation: badge-pop 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
 .stagger-item {
   animation: fade-up 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
@@ -254,6 +276,8 @@ h1, h2, h3, .font-display {
   .animate-shimmer,
   .animate-spin-slow,
   .animate-underline-grow,
+  .animate-bell-ring,
+  .animate-badge-pop,
   .stagger-item,
   .hover-lift,
   .press-scale {

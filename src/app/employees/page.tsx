@@ -120,7 +120,7 @@ export default function EmployeesPage() {
               onChange={(e) => setDepartment(e.target.value)}
             />
             <label className="flex flex-col gap-1 text-xs text-ink-muted">
-              Date Requirements Sent
+              Date MC sent pre-employment requirements
               <Input
                 type="date"
                 value={dateSent}
@@ -136,7 +136,7 @@ export default function EmployeesPage() {
               />
             </label>
             <label className="flex flex-col gap-1 text-xs text-ink-muted">
-              Date Hired / Onboarding Date
+              Hired/Onboarding Date
               <Input
                 type="date"
                 value={dateHired}

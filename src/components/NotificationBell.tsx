@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Employee, Task } from "@/types";
 import { isOverdue, isDueToday, formatDate } from "@/lib/dates";
@@ -76,8 +76,11 @@ function timeAgo(iso: string): string {
 export default function NotificationBell() {
   const [open, setOpen] = useState(false);
   const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [ringing, setRinging] = useState(false);
   const router = useRouter();
   const { notifications, unreadCount, markAllRead, clearAll } = useNotifications();
+
+  const prevCountRef = useRef<number | null>(null);
 
   useEffect(() => {
     readAlerts().then(setAlerts);
@@ -92,6 +95,16 @@ export default function NotificationBell() {
 
   const badgeCount = alerts.length + unreadCount;
 
+  // Ring the bell whenever a new notification arrives (count goes up).
+  useEffect(() => {
+    if (prevCountRef.current !== null && badgeCount > prevCountRef.current) {
+      setRinging(true);
+      const t = setTimeout(() => setRinging(false), 650);
+      return () => clearTimeout(t);
+    }
+    prevCountRef.current = badgeCount;
+  }, [badgeCount]);
+
   return (
     <div className="relative">
       <button
@@ -99,12 +112,17 @@ export default function NotificationBell() {
           setOpen((o) => !o);
           if (!open) markAllRead();
         }}
-        className="relative flex h-9 w-9 items-center justify-center rounded-full border border-border bg-background text-ink-muted hover:text-ink"
+        className="relative flex h-9 w-9 items-center justify-center rounded-full border border-border bg-background text-ink-muted transition-colors hover:text-ink"
         aria-label="Notifications"
       >
-        <BellIcon />
+        <span className={ringing ? "animate-bell-ring inline-flex" : "inline-flex"}>
+          <BellIcon />
+        </span>
         {badgeCount > 0 && (
-          <span className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-warn text-[10px] font-medium text-white">
+          <span
+            key={badgeCount}
+            className="animate-badge-pop absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-warn text-[10px] font-medium text-white"
+          >
             {badgeCount > 9 ? "9+" : badgeCount}
           </span>
         )}
@@ -113,21 +131,21 @@ export default function NotificationBell() {
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 z-20 mt-2 max-h-[26rem] w-80 overflow-y-auto rounded-lg border border-border bg-surface p-2 shadow-lg">
+          <div className="animate-scale-in absolute right-0 top-full z-20 mt-2 max-h-[26rem] w-80 origin-top-right overflow-y-auto rounded-xl border border-border bg-surface p-2 shadow-xl">
             {alerts.length > 0 && (
               <>
                 <p className="px-2 py-1.5 text-xs font-semibold uppercase tracking-wide text-ink-muted">
                   Employees & Deadlines
                 </p>
                 <ul className="mb-2 flex flex-col gap-1">
-                  {alerts.map((a) => (
-                    <li key={a.id}>
+                  {alerts.map((a, i) => (
+                    <li key={a.id} className="animate-fade-up" style={{ animationDelay: `${i * 30}ms` }}>
                       <button
                         onClick={() => {
                           setOpen(false);
                           router.push(a.href);
                         }}
-                        className="flex w-full flex-col rounded-md px-2 py-2 text-left hover:bg-background"
+                        className="flex w-full flex-col rounded-md px-2 py-2 text-left transition-colors hover:bg-background"
                       >
                         <span className="text-sm text-ink">{a.label}</span>
                         <span
@@ -162,8 +180,12 @@ export default function NotificationBell() {
               </p>
             ) : (
               <ul className="flex flex-col gap-1">
-                {notifications.slice(0, 30).map((n) => (
-                  <li key={n.id} className="flex flex-col rounded-md px-2 py-1.5">
+                {notifications.slice(0, 30).map((n, i) => (
+                  <li
+                    key={n.id}
+                    className="animate-fade-up flex flex-col rounded-md px-2 py-1.5 transition-colors hover:bg-background"
+                    style={{ animationDelay: `${Math.min(i, 10) * 25}ms` }}
+                  >
                     <span className="text-sm text-ink">{n.message}</span>
                     <span className="text-xs text-ink-muted">{timeAgo(n.createdAt)}</span>
                   </li>

@@ -44,45 +44,69 @@ export const REQUIREMENT_STATUS_LABELS: Record<RequirementStatus, string> = {
 };
 
 export type PreEmploymentChecklistKey =
-  | "resume"
-  | "govIds"
-  | "photos"
-  | "bir2316"
-  | "diploma"
-  | "nbi"
-  | "birthMarriageCerts"
-  | "coe"
+  | "bdoForm"
+  | "employmentContractCopy"
+  | "jobOfferCopy"
   | "applicationForm"
   | "companyIdForm"
-  | "philhealthForm";
+  | "philhealthForm"
+  | "resume"
+  | "diploma"
+  | "coe"
+  | "sssId"
+  | "tinId"
+  | "philhealthId"
+  | "pagibigId"
+  | "photos2x2"
+  | "photos1x1"
+  | "bir2316"
+  | "nbi"
+  | "birthCertificate"
+  | "marriageCertificate";
 
 export const PRE_EMPLOYMENT_CHECKLIST_LABELS: Record<PreEmploymentChecklistKey, string> = {
-  resume: "Resume",
-  govIds: "Photocopies of Gov IDs (SSS/TIN/PhilHealth/Pag-IBIG)",
-  photos: "1x1 & 2x2 photos (2pcs each)",
-  bir2316: "BIR 2316 (2026)",
-  diploma: "Diploma",
-  nbi: "NBI",
-  birthMarriageCerts: "Birth & Marriage Certificates",
-  coe: "COE",
-  applicationForm: "Attached Form: Application Form",
-  companyIdForm: "Attached Form: Request Company ID",
-  philhealthForm: "Attached Form: Philhealth Form",
+  bdoForm: "1 Copy of BDO Form",
+  employmentContractCopy: "2 Copies of Employment Contract",
+  jobOfferCopy: "1 Copy of Job Offer",
+  applicationForm: "1 Copy of Employee Application Form (Form Attached)",
+  companyIdForm: "1 Original Copy of Request for Company ID (Form Attached)",
+  philhealthForm: "1 Original Copy of PhilHealth Form (Form Attached)",
+  resume: "1 Copy of Updated Resume",
+  diploma: "1 Photocopy of Diploma",
+  coe: "Photocopy of Certificate(s) of Employment (COE from previous work)",
+  sssId: "1 Copy of Colored SSS ID or E1",
+  tinId: "1 Copy of Colored TIN ID",
+  philhealthId: "1 Copy of Colored PhilHealth ID (PMRF Form)",
+  pagibigId: "1 Copy of Colored Pag-IBIG (HMDF ID)",
+  photos2x2: "2 Pcs. 2x2 Colored Pictures (White Background)",
+  photos1x1: "2 Pcs. 1x1 Colored Pictures (White Background)",
+  bir2316: "1 Photocopy of BIR Form 2316 (Year 2026) - Can be to follow",
+  nbi: "1 Original Copy of NBI Clearance",
+  birthCertificate: "2 Photocopies of Birth Certificate",
+  marriageCertificate: "1 Photocopy of Marriage Certificate (if applicable)",
 };
 
 export function emptyPreEmploymentChecklist(): Record<PreEmploymentChecklistKey, boolean> {
   return {
-    resume: false,
-    govIds: false,
-    photos: false,
-    bir2316: false,
-    diploma: false,
-    nbi: false,
-    birthMarriageCerts: false,
-    coe: false,
+    bdoForm: false,
+    employmentContractCopy: false,
+    jobOfferCopy: false,
     applicationForm: false,
     companyIdForm: false,
     philhealthForm: false,
+    resume: false,
+    diploma: false,
+    coe: false,
+    sssId: false,
+    tinId: false,
+    philhealthId: false,
+    pagibigId: false,
+    photos2x2: false,
+    photos1x1: false,
+    bir2316: false,
+    nbi: false,
+    birthCertificate: false,
+    marriageCertificate: false,
   };
 }
 
@@ -288,8 +312,8 @@ export const REQUIREMENT_LABELS: Record<RequirementKey, string> = {
 
 export function emptyRequirements(): Record<RequirementKey, RequirementStatus> {
   return {
-    listOfRequirements: "pending",
-    preEmploymentMedical: "pending",
+    listOfRequirements: "lacking",
+    preEmploymentMedical: "lacking",
   };
 }
 
@@ -339,7 +363,9 @@ export const EMPLOYMENT_MILESTONE_REMINDER_OFFSETS: Record<
 export function getMissingCriticalItems(e: Employee): string[] {
   const checklist = e.preEmploymentChecklist || emptyPreEmploymentChecklist();
   const missing: string[] = [];
-  if (!checklist.govIds) missing.push("Government IDs");
+  if (!checklist.sssId || !checklist.tinId || !checklist.philhealthId || !checklist.pagibigId) {
+    missing.push("Government IDs");
+  }
   if (!checklist.nbi) missing.push("NBI");
   if (e.requirements.preEmploymentMedical !== "complete") missing.push("Medical Exam");
   return missing;

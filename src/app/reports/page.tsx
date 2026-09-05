@@ -502,6 +502,18 @@ function DailyReportTab() {
     setJustSaved(false);
   }
 
+  function clearDraft() {
+    setDraft((d) => ({
+      ...d,
+      summary: "",
+      activities: [],
+      challenges: [],
+      actionPlan: "",
+      images: [],
+    }));
+    notify("Report content cleared", "deleted");
+  }
+
   async function handleExportPdf() {
     if (!previewRef.current) return;
     setExporting(true);
@@ -524,6 +536,7 @@ function DailyReportTab() {
           <div className="mb-3 flex items-center justify-between">
             <p className="text-sm font-medium text-ink">Log activities</p>
             <div className="flex gap-2">
+              <Button variant="ghost" onClick={clearDraft}>Clear</Button>
               <Button variant="ghost" onClick={newReport}>New</Button>
               <Button onClick={saveDraft}>{editingId ? "Update" : "Save"} draft</Button>
             </div>
@@ -735,15 +748,15 @@ function DailyReportTab() {
       </div>
 
       {/* Preview */}
-      <div className="lg:sticky lg:top-6 lg:self-start">
+      <div className="min-w-0 lg:sticky lg:top-6 lg:self-start">
         <div className="mb-3 flex justify-end">
           <Button onClick={handleExportPdf} disabled={exporting}>
             {exporting ? "Exporting…" : "Export to PDF"}
           </Button>
         </div>
 
-        <div className="max-h-[calc(100dvh-8rem)] overflow-y-auto rounded-lg border border-border bg-surface">
-          <div ref={previewRef} className="bg-white p-8 text-[#1C2420]">
+        <div className="rounded-lg border border-border bg-surface">
+          <div ref={previewRef} className="min-w-0 bg-white p-8 text-[#1C2420] break-words">
             <div className="mb-6 border-b-2 border-[#0E5E56] pb-4">
               <h1 className="font-display text-2xl">HR Admin Report</h1>
               <p className="mt-1 text-sm text-[#5C6862]">{formatDate(draft.date, "MMMM d, yyyy")}</p>
@@ -757,13 +770,13 @@ function DailyReportTab() {
               <Section title="Summary of Activities">
                 {draft.summary.trim().length > 0 && (
                   <div
-                    className="prose-preview text-sm [&_h2]:font-display [&_h2]:text-base [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5"
+                    className="prose-preview break-words text-sm [&_h2]:font-display [&_h2]:text-base [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5"
                     dangerouslySetInnerHTML={{ __html: draft.summary }}
                   />
                 )}
 
                 {draft.activities.length > 0 && (
-                  <table className="mt-3 w-full border-collapse text-sm">
+                  <table className="mt-3 w-full table-fixed border-collapse text-sm">
                     <thead>
                       <tr className="bg-[#E4F0EE] text-left">
                         <th className="border border-[#DDE3DD] px-2 py-1.5">Activity</th>
@@ -774,9 +787,9 @@ function DailyReportTab() {
                     <tbody>
                       {draft.activities.map((row) => (
                         <tr key={row.id}>
-                          <td className="border border-[#DDE3DD] px-2 py-1.5">{row.activity || "—"}</td>
-                          <td className="border border-[#DDE3DD] px-2 py-1.5">{row.category || "—"}</td>
-                          <td className="border border-[#DDE3DD] px-2 py-1.5">{row.hours || 0}</td>
+                          <td className="border border-[#DDE3DD] px-2 py-1.5 break-words align-top">{row.activity || "—"}</td>
+                          <td className="border border-[#DDE3DD] px-2 py-1.5 break-words align-top">{row.category || "—"}</td>
+                          <td className="border border-[#DDE3DD] px-2 py-1.5 break-words align-top">{row.hours || 0}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -833,7 +846,7 @@ function DailyReportTab() {
             {draft.actionPlan.trim().length > 0 && (
               <Section title="Action Plan">
                 <div
-                  className="prose-preview text-sm [&_h2]:font-display [&_h2]:text-base [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5"
+                  className="prose-preview break-words text-sm [&_h2]:font-display [&_h2]:text-base [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5"
                   dangerouslySetInnerHTML={{ __html: draft.actionPlan }}
                 />
               </Section>
@@ -841,7 +854,7 @@ function DailyReportTab() {
 
             {draft.challenges.length > 0 && (
               <Section title="Challenges Encountered & Proposed Solutions">
-                <table className="w-full border-collapse text-sm">
+                <table className="w-full table-fixed border-collapse text-sm">
                   <thead>
                     <tr className="bg-[#E4F0EE] text-left">
                       <th className="border border-[#DDE3DD] px-2 py-1.5">Challenge</th>
@@ -851,8 +864,8 @@ function DailyReportTab() {
                   <tbody>
                     {draft.challenges.map((row) => (
                       <tr key={row.id}>
-                        <td className="border border-[#DDE3DD] px-2 py-1.5">{row.challenge || "—"}</td>
-                        <td className="border border-[#DDE3DD] px-2 py-1.5">{row.solution || "—"}</td>
+                        <td className="border border-[#DDE3DD] px-2 py-1.5 break-words align-top">{row.challenge || "—"}</td>
+                        <td className="border border-[#DDE3DD] px-2 py-1.5 break-words align-top">{row.solution || "—"}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -952,8 +965,8 @@ function WeeklyReportTab() {
   if (!hydrated || !tasksReady) return null;
 
   return (
-    <div className="grid gap-6 lg:grid-cols-2">
-      <div className="flex flex-col gap-4">
+    <div className="grid gap-6 lg:grid-cols-2 lg:items-start">
+      <div className="flex min-w-0 flex-col gap-4">
         <Card>
           <p className="mb-2 text-sm font-medium text-ink">Week</p>
           <Input
@@ -992,15 +1005,15 @@ function WeeklyReportTab() {
         )}
       </div>
 
-      <div className="lg:sticky lg:top-6 lg:self-start">
+      <div className="min-w-0 lg:sticky lg:top-6 lg:self-start">
         <div className="mb-3 flex justify-end">
           <Button onClick={handleExportPdf} disabled={exporting || dailyReportsThisWeek.length === 0}>
             {exporting ? "Exporting…" : "Export to PDF"}
           </Button>
         </div>
 
-        <div className="max-h-[calc(100dvh-8rem)] overflow-y-auto rounded-lg border border-border bg-surface">
-          <div ref={previewRef} className="bg-white p-8 text-[#1C2420]">
+        <div className="rounded-lg border border-border bg-surface">
+          <div ref={previewRef} className="min-w-0 bg-white p-8 text-[#1C2420] break-words">
             <div className="mb-6 border-b-2 border-[#0E5E56] pb-4">
               <h1 className="font-display text-2xl">HR Admin Report</h1>
               <p className="mt-1 text-sm text-[#5C6862]">
@@ -1018,7 +1031,7 @@ function WeeklyReportTab() {
               r.summary.trim().length > 0 ? (
                 <Section key={r.id} title={formatDate(r.date, "EEEE, MMM d")}>
                   <div
-                    className="prose-preview text-sm [&_h2]:font-display [&_h2]:text-base [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5"
+                    className="prose-preview break-words text-sm [&_h2]:font-display [&_h2]:text-base [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5"
                     dangerouslySetInnerHTML={{ __html: r.summary }}
                   />
                 </Section>
@@ -1027,7 +1040,7 @@ function WeeklyReportTab() {
 
             {combinedActivities.length > 0 && (
               <Section title="Activity Table (Mon–Fri)">
-                <table className="w-full border-collapse text-sm">
+                <table className="w-full table-fixed border-collapse text-sm">
                   <thead>
                     <tr className="bg-[#E4F0EE] text-left">
                       <th className="border border-[#DDE3DD] px-2 py-1.5">Activity</th>
@@ -1038,9 +1051,9 @@ function WeeklyReportTab() {
                   <tbody>
                     {combinedActivities.map((row) => (
                       <tr key={row.id}>
-                        <td className="border border-[#DDE3DD] px-2 py-1.5">{row.activity || "—"}</td>
-                        <td className="border border-[#DDE3DD] px-2 py-1.5">{row.category || "—"}</td>
-                        <td className="border border-[#DDE3DD] px-2 py-1.5">{row.hours || 0}</td>
+                        <td className="border border-[#DDE3DD] px-2 py-1.5 break-words align-top">{row.activity || "—"}</td>
+                        <td className="border border-[#DDE3DD] px-2 py-1.5 break-words align-top">{row.category || "—"}</td>
+                        <td className="border border-[#DDE3DD] px-2 py-1.5 break-words align-top">{row.hours || 0}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1085,7 +1098,7 @@ function WeeklyReportTab() {
 
             {combinedChallenges.length > 0 && (
               <Section title="Challenges Encountered & Proposed Solutions">
-                <table className="w-full border-collapse text-sm">
+                <table className="w-full table-fixed border-collapse text-sm">
                   <thead>
                     <tr className="bg-[#E4F0EE] text-left">
                       <th className="border border-[#DDE3DD] px-2 py-1.5">Challenge</th>
@@ -1095,8 +1108,8 @@ function WeeklyReportTab() {
                   <tbody>
                     {combinedChallenges.map((row) => (
                       <tr key={row.id}>
-                        <td className="border border-[#DDE3DD] px-2 py-1.5">{row.challenge || "—"}</td>
-                        <td className="border border-[#DDE3DD] px-2 py-1.5">{row.solution || "—"}</td>
+                        <td className="border border-[#DDE3DD] px-2 py-1.5 break-words align-top">{row.challenge || "—"}</td>
+                        <td className="border border-[#DDE3DD] px-2 py-1.5 break-words align-top">{row.solution || "—"}</td>
                       </tr>
                     ))}
                   </tbody>

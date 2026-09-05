@@ -89,7 +89,6 @@ export default function EmployeeDetailPage({
       : ""
   );
   const [checklistOpen, setChecklistOpen] = useState(false);
-  const [medicalChecklistOpen, setMedicalChecklistOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [checklistEditing, setChecklistEditing] = useState(false);
   const [newChecklistLabel, setNewChecklistLabel] = useState("");
@@ -172,6 +171,42 @@ export default function EmployeeDetailPage({
   function setRequirementNote(key: RequirementKey, note: string) {
     update(employee!.id, {
       requirementNotes: { ...employee!.requirementNotes, [key]: note },
+    });
+  }
+
+  function setCombinedRequirementStatus(status: RequirementStatus) {
+    const patch: Partial<Employee> = {
+      requirements: {
+        listOfRequirements: status,
+        preEmploymentMedical: status,
+      },
+    };
+    if (status === "complete") {
+      patch.preEmploymentChecklist = Object.keys(PRE_EMPLOYMENT_CHECKLIST_LABELS).reduce(
+        (acc, k) => ({ ...acc, [k]: true }),
+        {} as Record<PreEmploymentChecklistKey, boolean>
+      );
+      patch.medicalExamChecklist = Object.keys(MEDICAL_EXAM_CHECKLIST_LABELS).reduce(
+        (acc, k) => ({ ...acc, [k]: true }),
+        {} as Record<MedicalExamChecklistKey, boolean>
+      );
+    }
+    update(employee!.id, patch);
+    notify(
+      `${employee!.name} — Pre-Employment Requirements marked ${
+        status === "complete" ? "Complete" : "Incomplete"
+      }`,
+      "updated"
+    );
+  }
+
+  function setCombinedRequirementNote(note: string) {
+    update(employee!.id, {
+      requirementNotes: {
+        ...employee!.requirementNotes,
+        listOfRequirements: note,
+        preEmploymentMedical: note,
+      },
     });
   }
 
@@ -292,9 +327,10 @@ export default function EmployeeDetailPage({
     notify(`${employee!.name} — changes saved`, "updated");
   }
 
-  function saveSentDate() {
-    if (!sentDateInput) return;
-    const sentISO = new Date(sentDateInput).toISOString();
+  function handleSentDateChange(value: string) {
+    setSentDateInput(value);
+    if (!value) return;
+    const sentISO = new Date(value).toISOString();
     update(employee!.id, {
       dateRequirementsSent: sentISO,
       requirementsDeadline: addDaysISO(sentISO, 14),
@@ -399,7 +435,7 @@ export default function EmployeeDetailPage({
               onChange={(e) => handleBirthdayChange(e.target.value)}
             />
           </FieldGroup>
-          <FieldGroup label="Date Hired / Onboarding Date">
+          <FieldGroup label="Hired/Onboarding Date">
             <Input
               type="date"
               value={hireDateInput}
@@ -432,9 +468,9 @@ export default function EmployeeDetailPage({
         <div className="flex flex-col gap-6">
         <Card>
           <div className="flex items-center justify-between gap-3 border-b border-border pb-3">
-            <h2 className="font-display text-lg text-ink">Requirements</h2>
+            <h2 className="font-display text-lg text-ink">Pre-Employment Requirements</h2>
             <Pill tone={completeCount === totalCount ? "success" : "accent"}>
-              {completeCount}/{totalCount} complete
+              {completeCount === totalCount ? "Complete" : "Incomplete"}
             </Pill>
           </div>
 
@@ -442,19 +478,19 @@ export default function EmployeeDetailPage({
             <p className="text-xs text-ink-muted">
               Date Requirements Sent:{" "}
               <span className="font-medium text-ink">
-                {formatDate(employee.dateRequirementsSent || employee.dateAdded)}
+                {formatDate(employee.dateRequirementsSent || employee.dateAdded, "MMMM d, yyyy")}
               </span>
             </p>
             <p className="mt-1 text-xs text-ink-muted">
               Requirements Due:{" "}
               <span className="font-medium text-ink">
-                {formatDate(employee.requirementsDeadline)}
+                {formatDate(employee.requirementsDeadline, "MMMM d, yyyy")}
               </span>
             </p>
             <p className="mt-1 text-xs text-ink-muted">
               Hired/Onboarding Date:{" "}
               <span className="font-medium text-ink">
-                {employee.dateHired ? formatDate(employee.dateHired) : "—"}
+                {employee.dateHired ? formatDate(employee.dateHired, "MMMM d, yyyy") : "—"}
               </span>
             </p>
             {requirementCompletionDeadline && (
@@ -465,26 +501,18 @@ export default function EmployeeDetailPage({
                     isOverdue(requirementCompletionDeadline) ? "text-warn" : "text-ink"
                   }`}
                 >
-                  {formatDate(requirementCompletionDeadline)}
+                  {formatDate(requirementCompletionDeadline, "MMMM d, yyyy")}
                 </span>
               </p>
             )}
-            {lackingRequirements.length > 0 && (
-              <p className="mt-1 text-xs text-warn">
-                Lacking/incomplete: {lackingRequirements.join(", ")}
-              </p>
-            )}
             <div className="mt-3 flex flex-wrap items-end gap-3">
-              <FieldGroup label="Date Requirements Sent">
+              <FieldGroup label="Date MC sent pre-employment requirements">
                 <Input
                   type="date"
                   value={sentDateInput}
                   disabled={!isEditing}
-                  onChange={(e) => setSentDateInput(e.target.value)}
+                  onChange={(e) => handleSentDateChange(e.target.value)}
                 />
-                <Button variant="ghost" disabled={!isEditing} onClick={saveSentDate}>
-                  Save
-                </Button>
               </FieldGroup>
             </div>
             <p className="mt-2 text-xs text-ink-muted">
@@ -492,102 +520,84 @@ export default function EmployeeDetailPage({
             </p>
           </div>
 
-          <div className="mt-4 flex flex-col gap-2">
-            {(Object.keys(REQUIREMENT_LABELS) as RequirementKey[]).map((key) => (
-              <div key={key} className="rounded-md border border-border p-3">
-                <div className="flex items-center justify-between gap-3">
-                  {key === "listOfRequirements" ? (
-                    <button
-                      type="button"
-                      onClick={() => setChecklistOpen((o) => !o)}
-                      className="flex items-center gap-1.5 text-sm font-medium text-ink hover:text-accent"
-                    >
-                      <span
-                        className={`inline-block text-ink-muted transition-transform ${
-                          checklistOpen ? "rotate-90" : ""
-                        }`}
-                      >
-                        ›
-                      </span>
-                      {REQUIREMENT_LABELS[key]}
-                    </button>
-                  ) : key === "preEmploymentMedical" ? (
-                    <button
-                      type="button"
-                      onClick={() => setMedicalChecklistOpen((o) => !o)}
-                      className="flex items-center gap-1.5 text-sm font-medium text-ink hover:text-accent"
-                    >
-                      <span
-                        className={`inline-block text-ink-muted transition-transform ${
-                          medicalChecklistOpen ? "rotate-90" : ""
-                        }`}
-                      >
-                        ›
-                      </span>
-                      {REQUIREMENT_LABELS[key]}
-                    </button>
-                  ) : (
-                    <p className="text-sm font-medium text-ink">{REQUIREMENT_LABELS[key]}</p>
-                  )}
-                  <StatusSelect
-                    value={employee.requirements[key]}
-                    onChange={(v) => setRequirementStatus(key, v)}
-                    options={Object.keys(REQUIREMENT_STATUS_LABELS) as RequirementStatus[]}
-                    labels={REQUIREMENT_STATUS_LABELS}
-                    tone={requirementTone}
-                    disabled={!isEditing}
-                  />
-                </div>
-                {employee.requirements[key] === "lacking" && (
-                  <Textarea
-                    className="mt-2"
-                    placeholder="What's lacking?"
-                    rows={1}
-                    disabled={!isEditing}
-                    value={employee.requirementNotes?.[key] || ""}
-                    onChange={(e) => setRequirementNote(key, e.target.value)}
-                  />
-                )}
-                {key === "listOfRequirements" && checklistOpen && (
-                  <div className="mt-3 flex flex-col gap-1 border-t border-border pt-3 pl-4">
-                    {(Object.keys(PRE_EMPLOYMENT_CHECKLIST_LABELS) as PreEmploymentChecklistKey[]).map(
-                      (ck) => {
-                        const checked =
-                          employee.preEmploymentChecklist?.[ck] || false;
-                        return (
-                          <Checkbox
-                            key={ck}
-                            checked={checked}
-                            disabled={!isEditing}
-                            onChange={(c) => setChecklistItem(ck, c)}
-                            label={PRE_EMPLOYMENT_CHECKLIST_LABELS[ck]}
-                          />
-                        );
-                      }
-                    )}
-                  </div>
-                )}
-                {key === "preEmploymentMedical" && medicalChecklistOpen && (
-                  <div className="mt-3 flex flex-col gap-1 border-t border-border pt-3 pl-4">
-                    {(Object.keys(MEDICAL_EXAM_CHECKLIST_LABELS) as MedicalExamChecklistKey[]).map(
-                      (mk) => {
-                        const checked =
-                          employee.medicalExamChecklist?.[mk] || false;
-                        return (
-                          <Checkbox
-                            key={mk}
-                            checked={checked}
-                            disabled={!isEditing}
-                            onChange={(c) => setMedicalChecklistItem(mk, c)}
-                            label={MEDICAL_EXAM_CHECKLIST_LABELS[mk]}
-                          />
-                        );
-                      }
-                    )}
-                  </div>
-                )}
+          <div className="mt-4 flex flex-col gap-3">
+            <div className="rounded-md border border-border p-3">
+              <div className="flex items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={() => setChecklistOpen((o) => !o)}
+                  className="flex items-center gap-1.5 text-sm font-medium text-ink hover:text-accent"
+                >
+                  <span
+                    className={`inline-block text-ink-muted transition-transform ${
+                      checklistOpen ? "rotate-90" : ""
+                    }`}
+                  >
+                    ›
+                  </span>
+                  Pre-Employment Requirements — checklist
+                </button>
+                <StatusSelect
+                  value={completeCount === totalCount ? "complete" : "lacking"}
+                  onChange={(v) => setCombinedRequirementStatus(v)}
+                  options={["complete", "lacking"] as const as RequirementStatus[]}
+                  labels={{ complete: "Complete Requirements", lacking: "Incomplete Requirements" } as Record<RequirementStatus, string>}
+                  tone={(v) => (v === "complete" ? "success" : "warn")}
+                  disabled={!isEditing}
+                />
               </div>
-            ))}
+
+              {completeCount !== totalCount && (
+                <Textarea
+                  className="mt-3"
+                  placeholder="Which documents are lacking or missing?"
+                  rows={2}
+                  disabled={!isEditing}
+                  value={
+                    employee.requirementNotes?.listOfRequirements ||
+                    employee.requirementNotes?.preEmploymentMedical ||
+                    ""
+                  }
+                  onChange={(e) => setCombinedRequirementNote(e.target.value)}
+                />
+              )}
+
+              {checklistOpen && (
+                <div className="mt-3 flex flex-col gap-1 border-t border-border pt-3 pl-4">
+                  {(Object.keys(PRE_EMPLOYMENT_CHECKLIST_LABELS) as PreEmploymentChecklistKey[]).map(
+                    (ck) => {
+                      const checked = employee.preEmploymentChecklist?.[ck] || false;
+                      return (
+                        <Checkbox
+                          key={ck}
+                          checked={checked}
+                          disabled={!isEditing}
+                          onChange={(c) => setChecklistItem(ck, c)}
+                          label={PRE_EMPLOYMENT_CHECKLIST_LABELS[ck]}
+                        />
+                      );
+                    }
+                  )}
+                  <p className="mt-3 text-xs font-semibold text-ink-muted">
+                    Pre-Employment Medical Exam (Original Copies)
+                  </p>
+                  {(Object.keys(MEDICAL_EXAM_CHECKLIST_LABELS) as MedicalExamChecklistKey[]).map(
+                    (mk) => {
+                      const checked = employee.medicalExamChecklist?.[mk] || false;
+                      return (
+                        <Checkbox
+                          key={mk}
+                          checked={checked}
+                          disabled={!isEditing}
+                          onChange={(c) => setMedicalChecklistItem(mk, c)}
+                          label={MEDICAL_EXAM_CHECKLIST_LABELS[mk]}
+                        />
+                      );
+                    }
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </Card>
 

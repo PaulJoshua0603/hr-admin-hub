@@ -131,20 +131,33 @@ export function StatusSelect<T extends string>({
     accent: "bg-accent-soft text-accent",
   };
   return (
-    <select
-      value={value}
-      disabled={disabled}
-      onChange={(e) => onChange(e.target.value as T)}
-      className={`shrink-0 rounded-full border-0 px-3 py-1.5 text-xs font-semibold outline-none ring-0 focus:ring-2 focus:ring-accent disabled:cursor-not-allowed disabled:opacity-60 ${
-        disabled ? "" : "cursor-pointer"
-      } ${toneStyles[tone(value)]} ${className}`}
-    >
-      {options.map((o) => (
-        <option key={o} value={o}>
-          {labels[o]}
-        </option>
-      ))}
-    </select>
+    <div className={`relative inline-flex shrink-0 ${className}`}>
+      <select
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value as T)}
+        className={`appearance-none rounded-full border-0 py-1.5 pl-3 pr-8 text-xs font-semibold outline-none ring-0 focus:ring-2 focus:ring-accent disabled:cursor-not-allowed disabled:opacity-60 ${
+          disabled ? "" : "cursor-pointer"
+        } ${toneStyles[tone(value)]}`}
+      >
+        {options.map((o) => (
+          <option key={o} value={o}>
+            {labels[o]}
+          </option>
+        ))}
+      </select>
+      <svg
+        width="12"
+        height="12"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.5"
+        className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 opacity-70"
+      >
+        <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </div>
   );
 }
 

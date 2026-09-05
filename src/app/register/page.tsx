@@ -99,6 +99,9 @@ export default function RegisterPage() {
                   className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted"
                 />
                 <Input
+                  id="fullName"
+                  name="fullName"
+                  autoComplete="name"
                   required
                   placeholder="Jordan Reyes"
                   value={fullName}
@@ -116,7 +119,10 @@ export default function RegisterPage() {
                   className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted"
                 />
                 <Input
+                  id="email"
+                  name="email"
                   type="email"
+                  autoComplete="email"
                   required
                   placeholder="you@company.com"
                   value={email}
@@ -134,7 +140,10 @@ export default function RegisterPage() {
                   className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted"
                 />
                 <Input
+                  id="password"
+                  name="password"
                   type="password"
+                  autoComplete="new-password"
                   required
                   placeholder="At least 6 characters"
                   value={password}
@@ -152,7 +161,10 @@ export default function RegisterPage() {
                   className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted"
                 />
                 <Input
+                  id="confirmPassword"
+                  name="confirmPassword"
                   type="password"
+                  autoComplete="new-password"
                   required
                   placeholder="Repeat your password"
                   value={confirm}

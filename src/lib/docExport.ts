@@ -1,4 +1,13 @@
-import { Employee, getLackingRequirements } from "@/types";
+import {
+  Employee,
+  getLackingRequirements,
+  PRE_EMPLOYMENT_CHECKLIST_LABELS,
+  MEDICAL_EXAM_CHECKLIST_LABELS,
+  emptyPreEmploymentChecklist,
+  emptyMedicalExamChecklist,
+  type PreEmploymentChecklistKey,
+  type MedicalExamChecklistKey,
+} from "@/types";
 import { formatDate } from "./dates";
 
 function saveBlob(blob: Blob, filename: string) {
@@ -29,9 +38,8 @@ export async function exportRequirementsListDocx(employee: Employee) {
     VerticalAlign,
   } = await import("docx");
 
-  const pre = employee.preEmploymentChecklist;
-  const med = employee.medicalExamChecklist;
-  const onboarding = employee.onboardingNextSteps;
+  const pre = employee.preEmploymentChecklist || emptyPreEmploymentChecklist();
+  const med = employee.medicalExamChecklist || emptyMedicalExamChecklist();
 
   const BODY_FONT = "Aptos";
   const BODY_SIZE = 22; // 11pt — sized to fill the page comfortably
@@ -79,37 +87,21 @@ export async function exportRequirementsListDocx(employee: Employee) {
       },
     });
 
-  // Documents Required — mirrors EMPLOYEE 201 FILE CHECKLIST line items, sourced
-  // from the app's pre-employment checklist (and Job Offer / Contract from
-  // Onboarding Next Steps, which aren't tracked in preEmploymentChecklist).
-  const documentsRequired: { label: string; checked: boolean }[] = [
-    { label: "Employee Application Form (Original)", checked: !!pre?.applicationForm },
-    { label: "Birth Certificate (2 Photocopies)", checked: !!pre?.birthMarriageCerts },
-    { label: "Marriage Certificate (Photocopy, if applicable)", checked: !!pre?.birthMarriageCerts },
-    { label: "Updated Resume (1 Copy)", checked: !!pre?.resume },
-    { label: "Job Offer", checked: !!onboarding?.prepareJobOffer },
-    { label: "Employment Contract", checked: !!onboarding?.employmentContract },
-    { label: "Request for Company ID Form (Original)", checked: !!pre?.companyIdForm },
-    { label: "PhilHealth Form (Original)", checked: !!pre?.philhealthForm },
-    { label: "SSS ID / E-1 Form (Photocopy)", checked: !!pre?.govIds },
-    { label: "TIN ID (Photocopy)", checked: !!pre?.govIds },
-    { label: "PhilHealth ID / PMRF Form (Photocopy)", checked: !!pre?.govIds },
-    { label: "Pag-IBIG / HDMF ID (Photocopy)", checked: !!pre?.govIds },
-    { label: "Diploma (Photocopy)", checked: !!pre?.diploma },
-    { label: "Certificate(s) of Employment (Photocopy)", checked: !!pre?.coe },
-    { label: "BIR Form 2316 - Year 2026 (Photocopy / Follow-up if unavailable)", checked: !!pre?.bir2316 },
-    { label: "NBI Clearance (Original)", checked: !!pre?.nbi },
-    { label: "2 pcs. 2x2 Colored Pictures (White Background)", checked: !!pre?.photos },
-    { label: "2 pcs. 1x1 Colored Pictures (White Background)", checked: !!pre?.photos },
-  ];
+  // Pre-Employment Requirements — combined documents + medical exam checklist,
+  // sourced directly from the app's checklist definitions and data.
+  const documentsRequired: { label: string; checked: boolean }[] = (
+    Object.keys(PRE_EMPLOYMENT_CHECKLIST_LABELS) as PreEmploymentChecklistKey[]
+  ).map((key) => ({
+    label: PRE_EMPLOYMENT_CHECKLIST_LABELS[key],
+    checked: !!pre[key],
+  }));
 
-  const medicalRequirements: { label: string; checked: boolean }[] = [
-    { label: "Physical Examination", checked: !!med?.physicalExamination },
-    { label: "Complete Blood Count (CBC)", checked: !!med?.cbc },
-    { label: "Urinalysis", checked: !!med?.urinalysis },
-    { label: "Fecalysis", checked: !!med?.fecalysis },
-    { label: "Chest X-Ray", checked: !!med?.chestXray },
-  ];
+  const medicalRequirements: { label: string; checked: boolean }[] = (
+    Object.keys(MEDICAL_EXAM_CHECKLIST_LABELS) as MedicalExamChecklistKey[]
+  ).map((key) => ({
+    label: MEDICAL_EXAM_CHECKLIST_LABELS[key],
+    checked: !!med[key],
+  }));
 
   const allDocsChecked = documentsRequired.every((d) => d.checked);
   const allMedChecked = medicalRequirements.every((d) => d.checked);
@@ -122,7 +114,7 @@ export async function exportRequirementsListDocx(employee: Employee) {
     fieldLine("Employee Name", employee.name, true),
     fieldLine("Position", employee.position || "", true),
     fieldLine("Date Hired", employee.dateHired ? formatDate(employee.dateHired) : "", true),
-    sectionHeading("DOCUMENTS REQUIRED", true),
+    sectionHeading("PRE-EMPLOYMENT REQUIREMENTS", true),
     ...documentsRequired.map((d) => checklistParagraph(d.label, d.checked)),
   ];
 

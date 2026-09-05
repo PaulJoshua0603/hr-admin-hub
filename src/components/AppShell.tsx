@@ -8,15 +8,16 @@ import NotificationBell from "@/components/NotificationBell";
 import ProfileCard from "@/components/ProfileCard";
 import PageTransition from "@/components/PageTransition";
 import ThemeToggle from "@/components/ThemeToggle";
+import GlobalSearch from "@/components/GlobalSearch";
 import { useAuth } from "@/lib/authContext";
 import {
   CalendarIcon,
+  ClockIcon,
   DashboardIcon,
   EmployeesIcon,
   FilesIcon,
   LogoutIcon,
   ReportsIcon,
-  SearchIcon,
   TasksIcon,
 } from "@/components/icons";
 
@@ -35,9 +36,12 @@ function HeaderClock() {
   const timeStr = now.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 
   return (
-    <div className="hidden shrink-0 flex-col items-end leading-tight lg:flex">
-      <span className="text-sm font-medium text-ink">{timeStr}</span>
-      <span className="text-[11px] text-ink-muted">{dateStr}</span>
+    <div className="hidden shrink-0 items-center gap-2 rounded-full border border-border bg-background px-3 py-1.5 lg:flex">
+      <ClockIcon size={14} className="text-accent" />
+      <div className="flex flex-col leading-tight">
+        <span className="text-sm font-semibold text-ink">{timeStr}</span>
+        <span className="text-[10px] text-ink-muted">{dateStr}</span>
+      </div>
     </div>
   );
 }
@@ -48,7 +52,7 @@ const NAV = [
   { href: "/employees", label: "Employees", icon: EmployeesIcon },
   { href: "/reports", label: "Reports", icon: ReportsIcon },
   { href: "/calendar", label: "Calendar", icon: CalendarIcon },
-  { href: "/files", label: "Files", icon: FilesIcon },
+  { href: "/files", label: "File Manager", icon: FilesIcon },
 ];
 
 const PUBLIC_ROUTES = ["/login", "/register", "/forgot-password", "/reset-password"];
@@ -167,17 +171,7 @@ function ProtectedShell({ children }: { children: React.ReactNode }) {
           <header className="sticky top-0 z-10 flex shrink-0 items-center gap-2 border-b border-border bg-surface/90 px-3 py-3 backdrop-blur sm:gap-3 sm:px-5 sm:py-4 md:px-8">
             <MobileNav pathname={pathname} />
 
-            <div className="relative hidden min-w-0 max-w-sm flex-1 md:block">
-              <SearchIcon
-                size={16}
-                className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-muted"
-              />
-              <input
-                type="text"
-                placeholder="Search…"
-                className="w-full rounded-full border border-border bg-background py-2 pl-10 pr-4 text-sm text-ink outline-none transition-all focus:border-accent focus:ring-2 focus:ring-accent/15"
-              />
-            </div>
+            <GlobalSearch />
 
             <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
               <HeaderClock />

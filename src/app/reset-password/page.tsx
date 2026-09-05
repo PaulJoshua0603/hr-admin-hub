@@ -79,7 +79,10 @@ export default function ResetPasswordPage() {
                   className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted"
                 />
                 <Input
+                  id="newPassword"
+                  name="newPassword"
                   type="password"
+                  autoComplete="new-password"
                   required
                   placeholder="At least 6 characters"
                   value={password}
@@ -97,7 +100,10 @@ export default function ResetPasswordPage() {
                   className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted"
                 />
                 <Input
+                  id="confirmNewPassword"
+                  name="confirmNewPassword"
                   type="password"
+                  autoComplete="new-password"
                   required
                   placeholder="Repeat your password"
                   value={confirm}

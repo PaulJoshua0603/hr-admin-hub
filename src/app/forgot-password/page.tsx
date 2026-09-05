@@ -78,7 +78,10 @@ export default function ForgotPasswordPage() {
                   className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted"
                 />
                 <Input
+                  id="email"
+                  name="email"
                   type="email"
+                  autoComplete="email"
                   required
                   placeholder="you@company.com"
                   value={email}

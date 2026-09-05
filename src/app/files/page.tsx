@@ -128,7 +128,7 @@ export default function FilesPage() {
   return (
     <div>
       <SectionHeading
-        title="Files"
+        title="File Manager"
         subtitle="Drop in pictures, personal files, or documents to keep them all in one place."
         action={
           <div className="flex gap-2">
