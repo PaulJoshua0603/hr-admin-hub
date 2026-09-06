@@ -297,7 +297,9 @@ export async function exportContractOfEmploymentDocx(employee: Employee) {
 
   let xml = await file.async("text");
 
-  const issueDate = formatDate(todayISOString(), "MMMM d, yyyy");
+  const issueDate = employee.dateHired
+    ? formatDate(employee.dateHired, "MMMM d, yyyy")
+    : formatDate(todayISOString(), "MMMM d, yyyy");
   const hireDate = employee.dateHired ? formatDate(employee.dateHired, "MMMM d, yyyy") : "";
 
   // "Employee " immediately preceding "Fullname"/"Position" — drop the

@@ -5,12 +5,12 @@ import Link from "next/link";
 import { v4 as uuid } from "uuid";
 import { useSupabaseStore } from "@/lib/useSupabaseStore";
 import { useNotifications } from "@/lib/notificationContext";
+import { supabase, supabaseReady } from "@/lib/supabaseClient";
 import { addDaysISO, addMonthsISO, daysSince, formatDate, isOverdue, nextMondayISO, todayISO } from "@/lib/dates";
 import {
   exportContractOfEmploymentDocx,
   exportEndorsementLetterDocx,
   exportRequirementsListDocx,
-  uploadContractTemplate,
 } from "@/lib/docExport";
 import {
   Button,
@@ -361,6 +361,21 @@ export default function EmployeeDetailPage({
       onboardingChecklist: current.map((c) =>
         c.id === catId ? { ...c, items: c.items.filter((it) => it.id !== itemId) } : c
       ),
+    });
+  }
+
+  function moveItem(catId: string, itemId: string, direction: -1 | 1) {
+    const current = employee!.onboardingChecklist || [];
+    update(employee!.id, {
+      onboardingChecklist: current.map((c) => {
+        if (c.id !== catId) return c;
+        const idx = c.items.findIndex((it) => it.id === itemId);
+        const target = idx + direction;
+        if (idx === -1 || target < 0 || target >= c.items.length) return c;
+        const items = [...c.items];
+        [items[idx], items[target]] = [items[target], items[idx]];
+        return { ...c, items };
+      }),
     });
   }
 
@@ -892,28 +907,34 @@ export default function EmployeeDetailPage({
               Download Employee 201 File Checklist (Word)
             </Button>
             <Button variant="ghost" onClick={() => exportEndorsementLetterDocx(employee)}>
-              Download Endorsement Letter (Word)
+              Download BDO Endorsement Letter
             </Button>
             <Button variant="ghost" onClick={() => exportContractOfEmploymentDocx(employee)}>
               Download Contract of Employment (Word)
             </Button>
           </div>
 
-          <div className="mt-3 flex items-center gap-2">
+          <div className="mt-3 flex flex-wrap items-center gap-4">
             <label className="cursor-pointer text-xs text-ink-muted underline hover:text-accent">
-              Upload/replace Contract of Employment template
+              Upload BDO forms
               <input
                 type="file"
-                accept=".docx"
+                accept=".pdf,.doc,.docx,.png,.jpg,.jpeg"
+                multiple
                 className="hidden"
                 onChange={async (e) => {
-                  const file = e.target.files?.[0];
-                  if (!file) return;
-                  const { error } = await uploadContractTemplate(file);
-                  if (error) {
-                    notify(`Template upload failed: ${error}`, "warn");
-                  } else {
-                    notify("Contract of Employment template updated", "updated");
+                  const files = e.target.files;
+                  if (!files || files.length === 0 || !supabaseReady) return;
+                  for (const file of Array.from(files)) {
+                    const dest = `bdo-forms/${employee.id}-${Date.now()}-${file.name}`;
+                    const { error } = await supabase.storage.from("files").upload(dest, file, {
+                      upsert: true,
+                    });
+                    if (error) {
+                      notify(`BDO form upload failed: ${error.message}`, "warn");
+                    } else {
+                      notify(`BDO form uploaded: "${file.name}"`, "created");
+                    }
                   }
                   e.target.value = "";
                 }}
@@ -958,10 +979,30 @@ export default function EmployeeDetailPage({
                   {cat.items.length === 0 && !checklistEditing && (
                     <p className="text-xs text-ink-muted">No items yet.</p>
                   )}
-                  {cat.items.map((item) => (
+                  {cat.items.map((item, idx) => (
                     <div key={item.id} className="flex items-center justify-between gap-2">
                       {checklistEditing ? (
                         <>
+                          <div className="flex shrink-0 flex-col">
+                            <button
+                              type="button"
+                              disabled={!isEditing || idx === 0}
+                              onClick={() => moveItem(cat.id, item.id, -1)}
+                              className="text-ink-muted hover:text-accent disabled:opacity-30"
+                              aria-label="Move up"
+                            >
+                              ▲
+                            </button>
+                            <button
+                              type="button"
+                              disabled={!isEditing || idx === cat.items.length - 1}
+                              onClick={() => moveItem(cat.id, item.id, 1)}
+                              className="text-ink-muted hover:text-accent disabled:opacity-30"
+                              aria-label="Move down"
+                            >
+                              ▼
+                            </button>
+                          </div>
                           <Checkbox
                             checked={item.checked}
                             disabled={!isEditing}

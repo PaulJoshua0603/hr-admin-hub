@@ -44,6 +44,37 @@ export function computeEmployeeAlerts(employees: Employee[]): EmployeeAlert[] {
       });
     }
 
+    // Missing core profile identifiers — ID Number and Biometrics No.
+    const missingProfileFields: string[] = [];
+    if (!e.companyIdNumber?.trim()) missingProfileFields.push("ID Number");
+    if (!e.biometricsNo?.trim()) missingProfileFields.push("Biometrics No.");
+    if (missingProfileFields.length > 0) {
+      alerts.push({
+        id: `emp-profile-${e.id}`,
+        employeeId: e.id,
+        label: `${e.name} — profile incomplete`,
+        detail: `Missing: ${missingProfileFields.join(", ")}`,
+        tone: "warn",
+        href,
+      });
+    }
+
+    // Birthday — fires as an alert on the day itself.
+    if (e.birthday) {
+      const bday = parseISO(e.birthday);
+      const today = new Date();
+      if (bday.getMonth() === today.getMonth() && bday.getDate() === today.getDate()) {
+        alerts.push({
+          id: `emp-birthday-${e.id}`,
+          employeeId: e.id,
+          label: `🎂 ${e.name}'s Birthday today`,
+          detail: "Employee birthday",
+          tone: "accent",
+          href,
+        });
+      }
+    }
+
     // Employment milestones — only for active (not offboarded) employees with a hire date.
     if (e.dateHired && !e.lastDay) {
       (Object.keys(EMPLOYMENT_MILESTONE_MONTHS) as EmploymentMilestoneKey[]).forEach((key) => {

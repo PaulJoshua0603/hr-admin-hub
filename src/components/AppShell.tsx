@@ -15,7 +15,6 @@ import {
   ClockIcon,
   DashboardIcon,
   EmployeesIcon,
-  FilesIcon,
   LogoutIcon,
   ReportsIcon,
   TasksIcon,
@@ -65,7 +64,6 @@ const NAV = [
   { href: "/employees", label: "Employees", icon: EmployeesIcon },
   { href: "/reports", label: "Reports", icon: ReportsIcon },
   { href: "/calendar", label: "Calendar", icon: CalendarIcon },
-  { href: "/files", label: "File Manager", icon: FilesIcon },
 ];
 
 const PUBLIC_ROUTES = ["/login", "/register", "/forgot-password", "/reset-password"];

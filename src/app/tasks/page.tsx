@@ -428,11 +428,8 @@ function EmptyState({ text }: { text: string }) {
 
 /* ----------------------------- Notes ------------------------------ */
 
-const UNDO_LIMIT = 50;
-const AUTOSAVE_MS = 500;
-
 function RemindersSection() {
-  const { items, hydrated, setItems } = useSupabaseStore<ReminderNote>(
+  const { items, hydrated, add, update, remove } = useSupabaseStore<ReminderNote>(
     "hr_reminders",
     []
   );
@@ -442,70 +439,52 @@ function RemindersSection() {
   );
   const { notify } = useNotifications();
 
-  const [value, setValue] = useState("");
-  const [savedAt, setSavedAt] = useState<string | null>(null);
-  const historyRef = useRef<string[]>([]);
-  const [canUndo, setCanUndo] = useState(false);
-  const loadedRef = useRef(false);
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [showEventForm, setShowEventForm] = useState(false);
   const [eventTitle, setEventTitle] = useState("");
   const [eventDate, setEventDate] = useState(todayISO().slice(0, 10));
   const [eventTime, setEventTime] = useState("");
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const dirtyRef = useRef(false);
+  const [eventSourceNoteId, setEventSourceNoteId] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!hydrated || loadedRef.current) return;
-    loadedRef.current = true;
-    const note = items.find((n) => n.id === REMINDER_NOTE_ID);
-    if (note) {
-      setValue(note.content);
-      setSavedAt(note.updatedAt);
-    }
-  }, [hydrated, items]);
+  const notes = [...items].sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
 
-  function persist(next: string) {
-    setItems([{ id: REMINDER_NOTE_ID, content: next, updatedAt: todayISO() }]);
-    setSavedAt(todayISO());
+  function draftFor(note: ReminderNote): string {
+    return drafts[note.id] !== undefined ? drafts[note.id] : note.content;
   }
 
-  function handleChange(next: string) {
-    historyRef.current.push(value);
-    if (historyRef.current.length > UNDO_LIMIT) historyRef.current.shift();
-    setCanUndo(true);
-    setValue(next);
-    dirtyRef.current = true;
-
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => persist(next), AUTOSAVE_MS);
+  function isDirty(note: ReminderNote): boolean {
+    return drafts[note.id] !== undefined && drafts[note.id] !== note.content;
   }
 
-  function handleBlur() {
-    if (dirtyRef.current) {
-      notify("Note saved", "updated");
-      dirtyRef.current = false;
-    }
+  function addNote(initialContent = "") {
+    const id = uuid();
+    add({ id, content: initialContent, updatedAt: todayISO() });
+    if (initialContent) notify("Note added", "created");
   }
 
-  function handleUndo() {
-    const prev = historyRef.current.pop();
-    if (prev === undefined) return;
-    setCanUndo(historyRef.current.length > 0);
-    setValue(prev);
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => persist(prev), AUTOSAVE_MS);
+  function saveNote(note: ReminderNote) {
+    const content = draftFor(note);
+    update(note.id, { content, updatedAt: todayISO() });
+    setDrafts((prev) => {
+      const next = { ...prev };
+      delete next[note.id];
+      return next;
+    });
+    notify("Note saved", "updated");
   }
 
-  function openEventForm() {
-    const el = textareaRef.current;
-    const selected =
-      el && el.selectionStart !== el.selectionEnd
-        ? value.slice(el.selectionStart, el.selectionEnd)
-        : value.split("\n").find((l) => l.trim().length > 0) || "";
-    setEventTitle(selected.trim().slice(0, 120));
+  function deleteNote(note: ReminderNote) {
+    remove(note.id);
+    notify("Note deleted", "deleted");
+  }
+
+  function openEventForm(note: ReminderNote) {
+    const content = draftFor(note);
+    const firstLine = content.split("\n").find((l) => l.trim().length > 0) || "";
+    setEventTitle(firstLine.trim().slice(0, 120));
     setEventDate(todayISO().slice(0, 10));
     setEventTime("");
+    setEventSourceNoteId(note.id);
     setShowEventForm(true);
   }
 
@@ -521,6 +500,7 @@ function RemindersSection() {
     });
     notify(`Calendar event added: "${eventTitle.trim()}"`, "created");
     setShowEventForm(false);
+    setEventSourceNoteId(null);
   }
 
   if (!hydrated) return null;
@@ -531,38 +511,20 @@ function RemindersSection() {
         <div>
           <h2 className="font-display text-xl text-ink">Notes</h2>
           <p className="mt-1 text-sm text-ink-muted">
-            One running notepad for standing notes — just keep typing.
+            Add as many standing notes as you need — each one saves independently.
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          {savedAt && (
-            <span className="text-xs text-ink-muted">Saved {formatDate(savedAt, "h:mm a")}</span>
-          )}
-          {!value.trim() && (
-            <Button
-              variant="ghost"
-              onClick={() => {
-                handleChange(HR_TASK_REFERENCE_TEMPLATE);
-                persist(HR_TASK_REFERENCE_TEMPLATE);
-              }}
-            >
-              Load HR task reference
-            </Button>
-          )}
-          <Button variant="ghost" onClick={openEventForm}>
-            Add to Calendar
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" onClick={() => addNote(HR_TASK_REFERENCE_TEMPLATE)}>
+            + HR task reference note
           </Button>
-          <Button variant="ghost" onClick={handleUndo} disabled={!canUndo}>
-            Undo
-          </Button>
+          <Button onClick={() => addNote()}>+ Add note</Button>
         </div>
       </div>
+
       {showEventForm && (
         <Card className="mb-4">
-          <p className="mb-2 text-xs text-ink-muted">
-            Create a calendar event from this note. Select text in the notepad first to use it
-            as the title, or edit below.
-          </p>
+          <p className="mb-2 text-xs text-ink-muted">Create a calendar event from this note.</p>
           <div className="flex flex-col gap-3">
             <Input
               placeholder="Event title"
@@ -596,24 +558,62 @@ function RemindersSection() {
               >
                 Save to Calendar
               </Button>
-              <Button variant="ghost" onClick={() => setShowEventForm(false)}>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setShowEventForm(false);
+                  setEventSourceNoteId(null);
+                }}
+              >
                 Cancel
               </Button>
             </div>
           </div>
         </Card>
       )}
-      <Card>
-        <Textarea
-          ref={textareaRef}
-          value={value}
-          onChange={(e) => handleChange(e.target.value)}
-          onBlur={handleBlur}
-          placeholder="Check Outlook email…&#10;Follow up with payroll…&#10;Renew business permit…"
-          rows={10}
-          className="resize-y"
-        />
-      </Card>
+
+      {notes.length === 0 ? (
+        <EmptyState text='No notes yet. Click "+ Add note" to write your first one.' />
+      ) : (
+        <div className="flex flex-col gap-4">
+          {notes.map((note) => {
+            const dirty = isDirty(note);
+            return (
+              <Card key={note.id}>
+                <Textarea
+                  value={draftFor(note)}
+                  onChange={(e) =>
+                    setDrafts((prev) => ({ ...prev, [note.id]: e.target.value }))
+                  }
+                  placeholder="Check Outlook email…&#10;Follow up with payroll…&#10;Renew business permit…"
+                  rows={6}
+                  className="resize-y"
+                />
+                <div className="mt-3 flex items-center justify-between gap-3">
+                  <span className="text-xs text-ink-muted">
+                    {dirty ? "Unsaved changes" : `Saved ${formatDate(note.updatedAt, "MMM d, h:mm a")}`}
+                  </span>
+                  <div className="flex gap-2">
+                    <Button variant="ghost" onClick={() => openEventForm(note)}>
+                      Add to Calendar
+                    </Button>
+                    <Button variant="danger" onClick={() => deleteNote(note)}>
+                      Delete
+                    </Button>
+                    <Button
+                      onClick={() => saveNote(note)}
+                      disabled={!dirty}
+                      className={!dirty ? "opacity-50" : ""}
+                    >
+                      Save
+                    </Button>
+                  </div>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

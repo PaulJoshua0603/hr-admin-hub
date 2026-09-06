@@ -275,6 +275,16 @@ export const RESIGNED_STATUS_LABELS: Record<ResignedStatus, string> = {
   resigned: "Resigned",
 };
 
+export type COERequest = {
+  id: string;
+  employeeName: string;
+  position: string;
+  department: string;
+  purpose: string;
+  dateRequested: string; // ISO date
+  dateGiven?: string; // ISO date
+};
+
 export type OnboardingChecklistItem = {
   id: string;
   label: string;
@@ -404,14 +414,8 @@ export const EMPLOYMENT_MILESTONE_REMINDER_OFFSETS: Record<
   EmploymentMilestoneKey,
   MilestoneReminderOffset[]
 > = {
-  thirdMonth: [
-    { label: "3 weeks before", offsetDays: -21 },
-    { label: "1 day after", offsetDays: 1 },
-  ],
-  sixthMonth: [
-    { label: "4 weeks before", offsetDays: -28 },
-    { label: "on due date", offsetDays: 0 },
-  ],
+  thirdMonth: [{ label: "3 weeks before", offsetDays: -21 }],
+  sixthMonth: [{ label: "4 months before", offsetDays: -122 }],
   oneYear: [{ label: "1 week before", offsetDays: -7 }],
 };
 

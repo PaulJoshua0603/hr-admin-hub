@@ -52,7 +52,9 @@ export default function DashboardPage() {
     employees.length > 0 ? Math.round((employeesComplete / employees.length) * 100) : 0;
 
   const employeeAlerts = computeEmployeeAlerts(employees);
-  const milestoneAlerts = employeeAlerts.filter((a) => a.id.includes("-milestone-") || a.id.includes("-coe-"));
+  const milestoneAlerts = employeeAlerts.filter(
+    (a) => a.id.includes("-milestone-") || a.id.includes("-coe-") || a.id.includes("-profile-")
+  );
 
   const firstName = getFirstName(
     user?.user_metadata?.full_name as string | undefined,
@@ -179,7 +181,7 @@ export default function DashboardPage() {
         <Card hover className="stagger-item mb-6" style={{ animationDelay: "460ms" }}>
           <h2 className="font-display text-lg text-ink">Milestones & Offboarding</h2>
           <p className="mt-0.5 text-xs text-ink-muted">
-            3rd Month Assessment, 6th Month Appraisal/Regularization, 1-Year Anniversary, and COE prep.
+            Milestones, COE prep, and incomplete profiles (missing ID/Biometrics No.).
           </p>
           <div className="mt-3 flex flex-col gap-1">
             {milestoneAlerts.map((a) => (

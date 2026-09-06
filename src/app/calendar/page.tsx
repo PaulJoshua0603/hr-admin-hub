@@ -17,6 +17,8 @@ import {
 import { useSupabaseStore } from "@/lib/useSupabaseStore";
 import { Button, Card, Input, Pill, SectionHeading } from "@/components/ui";
 import type { CalendarEvent, Employee, Task } from "@/types";
+import { EMPLOYMENT_MILESTONE_LABELS, EMPLOYMENT_MILESTONE_MONTHS, type EmploymentMilestoneKey } from "@/types";
+import { addMonthsISO } from "@/lib/dates";
 
 type DayEvent = { label: string; tone: "accent" | "warn" | "success"; time?: string };
 
@@ -64,7 +66,36 @@ export default function CalendarPage() {
       const key = format(parseISO(e.dateHired), "yyyy-MM-dd");
       map.set(key, [
         ...(map.get(key) || []),
-        { label: `${e.name} — onboarding`, tone: "success" },
+        { label: `Hired/Onboarded: ${e.name}`, tone: "success" },
+      ]);
+    }
+
+    // Employment milestones — 3rd month, 6th month, 1-year anniversary,
+    // computed from each employee's Hired/Onboarding Date.
+    for (const e of employees) {
+      if (!e.dateHired || e.lastDay) continue;
+      (Object.keys(EMPLOYMENT_MILESTONE_MONTHS) as EmploymentMilestoneKey[]).forEach((mKey) => {
+        const milestoneDate = addMonthsISO(e.dateHired!, EMPLOYMENT_MILESTONE_MONTHS[mKey]);
+        const key = format(parseISO(milestoneDate), "yyyy-MM-dd");
+        map.set(key, [
+          ...(map.get(key) || []),
+          { label: `${e.name} — ${EMPLOYMENT_MILESTONE_LABELS[mKey]}`, tone: "accent" },
+        ]);
+      });
+    }
+
+    // Employee birthdays — recur every year on the same month/day, plotted
+    // across every month shown regardless of the birth year on file.
+    for (const e of employees) {
+      if (!e.birthday) continue;
+      const bday = parseISO(e.birthday);
+      const key = format(
+        new Date(month.getFullYear(), bday.getMonth(), bday.getDate()),
+        "yyyy-MM-dd"
+      );
+      map.set(key, [
+        ...(map.get(key) || []),
+        { label: `🎂 ${e.name}'s Birthday`, tone: "warn" },
       ]);
     }
 
@@ -77,7 +108,7 @@ export default function CalendarPage() {
     }
 
     return map;
-  }, [tasks, employees, events]);
+  }, [tasks, employees, events, month]);
 
   if (!tasksReady || !empReady || !eventsReady) return null;
 

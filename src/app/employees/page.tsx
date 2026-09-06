@@ -12,6 +12,7 @@ import {
   getMissingCriticalItems,
   defaultOnboardingChecklist,
   type Employee,
+  type COERequest,
 } from "@/types";
 import { useNotifications } from "@/lib/notificationContext";
 
@@ -225,6 +226,161 @@ export default function EmployeesPage() {
           );
         })}
       </div>
+
+      <COETrackingSection />
+    </div>
+  );
+}
+
+/* ------------------------------ COE Tracking ------------------------------ */
+
+function COETrackingSection() {
+  const { items: requests, hydrated, add, update, remove } = useSupabaseStore<COERequest>(
+    "hr_coe_requests",
+    []
+  );
+  const { notify } = useNotifications();
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({
+    employeeName: "",
+    position: "",
+    department: "",
+    purpose: "",
+    dateRequested: todayISO().slice(0, 10),
+  });
+
+  function addRequest() {
+    if (!form.employeeName.trim()) return;
+    add({
+      id: uuid(),
+      employeeName: form.employeeName.trim(),
+      position: form.position.trim(),
+      department: form.department.trim(),
+      purpose: form.purpose.trim(),
+      dateRequested: new Date(form.dateRequested).toISOString(),
+    });
+    notify(`COE request logged for "${form.employeeName.trim()}"`, "created");
+    setForm({
+      employeeName: "",
+      position: "",
+      department: "",
+      purpose: "",
+      dateRequested: todayISO().slice(0, 10),
+    });
+    setShowForm(false);
+  }
+
+  function setDateGiven(req: COERequest, value: string) {
+    update(req.id, { dateGiven: value ? new Date(value).toISOString() : undefined });
+    if (value) notify(`COE marked given for "${req.employeeName}"`, "updated");
+  }
+
+  if (!hydrated) return null;
+
+  const sorted = [...requests].sort((a, b) => (a.dateRequested < b.dateRequested ? 1 : -1));
+
+  return (
+    <div className="mt-10">
+      <SectionHeading
+        title="Certificate of Employment (COE) Tracking"
+        subtitle="Employees who requested and received a Certificate of Employment."
+        action={<Button onClick={() => setShowForm((s) => !s)}>+ Log COE request</Button>}
+      />
+
+      {showForm && (
+        <Card className="mb-4">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <Input
+              placeholder="Employee name"
+              value={form.employeeName}
+              onChange={(e) => setForm((f) => ({ ...f, employeeName: e.target.value }))}
+              autoFocus
+            />
+            <Input
+              placeholder="Position"
+              value={form.position}
+              onChange={(e) => setForm((f) => ({ ...f, position: e.target.value }))}
+            />
+            <Input
+              placeholder="Department"
+              value={form.department}
+              onChange={(e) => setForm((f) => ({ ...f, department: e.target.value }))}
+            />
+            <Input
+              placeholder="Purpose (e.g. Bank loan, Visa application)"
+              value={form.purpose}
+              onChange={(e) => setForm((f) => ({ ...f, purpose: e.target.value }))}
+              className="sm:col-span-2 lg:col-span-2"
+            />
+            <label className="flex flex-col gap-1 text-xs text-ink-muted">
+              Date requested
+              <Input
+                type="date"
+                value={form.dateRequested}
+                onChange={(e) => setForm((f) => ({ ...f, dateRequested: e.target.value }))}
+              />
+            </label>
+          </div>
+          <div className="mt-3 flex gap-2">
+            <Button onClick={addRequest}>Save</Button>
+            <Button variant="ghost" onClick={() => setShowForm(false)}>
+              Cancel
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      {sorted.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-ink-muted">
+          No COE requests logged yet.
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="w-full min-w-[720px] text-left text-sm">
+            <thead>
+              <tr className="bg-background text-xs uppercase tracking-wide text-ink-muted">
+                <th className="px-3 py-2">Employee Name</th>
+                <th className="px-3 py-2">Position</th>
+                <th className="px-3 py-2">Department</th>
+                <th className="px-3 py-2">Purpose</th>
+                <th className="px-3 py-2">Date Requested</th>
+                <th className="px-3 py-2">Date COE Given</th>
+                <th className="px-3 py-2" />
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((req) => (
+                <tr key={req.id} className="border-t border-border">
+                  <td className="px-3 py-2 text-ink">{req.employeeName}</td>
+                  <td className="px-3 py-2 text-ink-muted">{req.position || "—"}</td>
+                  <td className="px-3 py-2 text-ink-muted">{req.department || "—"}</td>
+                  <td className="px-3 py-2 text-ink-muted">{req.purpose || "—"}</td>
+                  <td className="px-3 py-2 text-ink-muted">{formatDate(req.dateRequested)}</td>
+                  <td className="px-3 py-2">
+                    <Input
+                      type="date"
+                      value={req.dateGiven ? req.dateGiven.slice(0, 10) : ""}
+                      onChange={(e) => setDateGiven(req, e.target.value)}
+                      className="min-w-[150px]"
+                    />
+                  </td>
+                  <td className="px-3 py-2">
+                    <button
+                      onClick={() => {
+                        remove(req.id);
+                        notify(`COE request removed for "${req.employeeName}"`, "deleted");
+                      }}
+                      className="text-xs text-ink-muted hover:text-warn"
+                    >
+                      Delete
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
