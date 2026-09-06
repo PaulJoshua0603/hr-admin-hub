@@ -114,7 +114,7 @@ export async function exportRequirementsListDocx(employee: Employee) {
   const leftColumn: InstanceType<typeof Paragraph>[] = [
     fieldLine("Employee Name", employee.name, true),
     fieldLine("Position", employee.position || "", true),
-    fieldLine("Date Hired", employee.dateHired ? formatDate(employee.dateHired) : "", true),
+    fieldLine("Date Hired", employee.dateHired ? formatDate(employee.dateHired, "MMMM d, yyyy") : "", true),
     sectionHeading("PRE-EMPLOYMENT REQUIREMENTS", true),
     ...documentsRequired.map((d) => checklistParagraph(d.label, d.checked)),
   ];
@@ -137,7 +137,7 @@ export async function exportRequirementsListDocx(employee: Employee) {
     sectionHeading("COMPLETION STATUS"),
     checklistParagraph("Complete Requirements", isComplete),
     checklistParagraph("Incomplete Requirements", !isComplete),
-    fieldLine("Remarks", remarksText),
+    fieldLine("Remarks", ""),
     fieldLine("Realcognita email issued", employee.realcognitaEmail || "", false, 520),
     fieldLine("Biometrics number", employee.biometricsNo || "", false, 400),
     fieldLine("ID number", employee.companyIdNumber || "", false, 400),
@@ -224,6 +224,34 @@ export async function exportRequirementsListDocx(employee: Employee) {
   saveBlob(blob, `${employee.name} 201 Checklist.docx`);
 }
 
+function escapeXml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Replace every exact <w:t>EXACT</w:t> node's text with `replacement`. */
+function replaceExactRunTextAll(xml: string, exact: string, replacement: string): string {
+  const re = new RegExp(`(<w:t[^>]*>)${escapeRegExp(exact)}(</w:t>)`, "g");
+  return xml.replace(re, (_m, open, close) => `${open}${escapeXml(replacement)}${close}`);
+}
+
+/** Replace each exact <w:t>EXACT</w:t> node's text in document order with the next value from `replacements`. */
+function replaceExactRunTextSequential(xml: string, exact: string, replacements: string[]): string {
+  const re = new RegExp(`(<w:t[^>]*>)${escapeRegExp(exact)}(</w:t>)`, "g");
+  let i = 0;
+  return xml.replace(re, (_m, open, close) => {
+    const val = i < replacements.length ? replacements[i] : exact;
+    i++;
+    return `${open}${escapeXml(val)}${close}`;
+  });
+}
+
 export async function exportContractOfEmploymentDocx(employee: Employee) {
   let blob: Blob;
   if (supabaseReady) {
@@ -234,7 +262,45 @@ export async function exportContractOfEmploymentDocx(employee: Employee) {
   } else {
     blob = await fetch("/templates/contract-of-employment.docx").then((r) => r.blob());
   }
-  saveBlob(blob, `${employee.name} Contract of Employment.docx`);
+
+  const JSZip = (await import("jszip")).default;
+  const zip = await JSZip.loadAsync(blob);
+  const docPath = "word/document.xml";
+  const file = zip.file(docPath);
+  if (!file) {
+    saveBlob(blob, `${employee.name} Contract of Employment.docx`);
+    return;
+  }
+
+  let xml = await file.async("text");
+
+  const issueDate = formatDate(todayISOString(), "MMMM d, yyyy");
+  const hireDate = employee.dateHired ? formatDate(employee.dateHired, "MMMM d, yyyy") : "";
+
+  // "Employee " immediately preceding "Fullname"/"Position" — drop the
+  // literal "Employee " prefix so the placeholder reads as the real value.
+  xml = replaceExactRunTextAll(xml, "Employee ", "");
+  xml = replaceExactRunTextAll(xml, "Fullname", employee.name || "");
+  xml = replaceExactRunTextAll(xml, "Position", employee.position || "");
+  // Merged single-run placeholders.
+  xml = replaceExactRunTextAll(xml, "Employee Position", employee.position || "");
+  xml = replaceExactRunTextAll(xml, "Employee Name", employee.name || "");
+  xml = replaceExactRunTextAll(xml, "Employee Address", employee.homeAddress || "");
+  // Two "Month Day, Year" placeholders in document order: contract issue
+  // date first, then the employment commencement (hire) date.
+  xml = replaceExactRunTextSequential(xml, "Month Day, Year", [issueDate, hireDate]);
+
+  zip.file(docPath, xml);
+  const outBlob = await zip.generateAsync({
+    type: "blob",
+    mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  });
+
+  saveBlob(outBlob, `${employee.name} Contract of Employment.docx`);
+}
+
+function todayISOString(): string {
+  return new Date().toISOString();
 }
 
 export async function uploadContractTemplate(file: File) {
