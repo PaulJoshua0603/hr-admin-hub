@@ -36,3 +36,10 @@ drop policy if exists "files bucket - authenticated delete" on storage.objects;
 create policy "files bucket - authenticated delete"
   on storage.objects for delete
   using (bucket_id = 'files' and auth.role() = 'authenticated');
+
+-- Raise the files bucket's max upload size (Supabase defaults new buckets
+-- to a small cap). 100MB is generous for scanned PDFs, photos, and docx
+-- files while staying well under most Supabase plan limits.
+update storage.buckets
+set file_size_limit = 104857600 -- 100 MB in bytes
+where id = 'files';

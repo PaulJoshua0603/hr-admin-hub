@@ -462,20 +462,34 @@ export default function EmployeeDetailPage({
         <h2 className="font-display text-lg text-ink">Employee details</h2>
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <FieldGroup label="Birthday">
-            <Input
-              type="date"
-              value={birthdayInput}
-              disabled={!isEditing}
-              onChange={(e) => handleBirthdayChange(e.target.value)}
-            />
+            <div className="flex w-full flex-col gap-1">
+              <Input
+                type="date"
+                value={birthdayInput}
+                disabled={!isEditing}
+                onChange={(e) => handleBirthdayChange(e.target.value)}
+              />
+              {employee.birthday && (
+                <p className="text-xs text-ink-muted">
+                  {formatDate(employee.birthday, "MMMM d, yyyy")}
+                </p>
+              )}
+            </div>
           </FieldGroup>
           <FieldGroup label="Hired/Onboarding Date">
-            <Input
-              type="date"
-              value={hireDateInput}
-              disabled={!isEditing}
-              onChange={(e) => handleHireDateChange(e.target.value)}
-            />
+            <div className="flex w-full flex-col gap-1">
+              <Input
+                type="date"
+                value={hireDateInput}
+                disabled={!isEditing}
+                onChange={(e) => handleHireDateChange(e.target.value)}
+              />
+              {employee.dateHired && (
+                <p className="text-xs text-ink-muted">
+                  {formatDate(employee.dateHired, "MMMM d, yyyy")}
+                </p>
+              )}
+            </div>
           </FieldGroup>
         </div>
         {missingCritical.length > 0 && (
@@ -573,6 +587,14 @@ export default function EmployeeDetailPage({
               onChange={(e) => update(employee.id, { homeAddress: e.target.value })}
             />
           </FieldGroup>
+          <FieldGroup label="City">
+            <Input
+              placeholder="e.g. Taguig City"
+              value={employee.homeCity || ""}
+              disabled={!isEditing}
+              onChange={(e) => update(employee.id, { homeCity: e.target.value })}
+            />
+          </FieldGroup>
           <FieldGroup label="Working Hours">
             <select
               value={employee.workingHours || ""}
@@ -602,12 +624,19 @@ export default function EmployeeDetailPage({
           <div className="mt-4 rounded-md bg-background p-3">
             <div className="flex flex-wrap items-end gap-3">
               <FieldGroup label="Date MC sent pre-employment requirements">
-                <Input
-                  type="date"
-                  value={sentDateInput}
-                  disabled={!isEditing}
-                  onChange={(e) => handleSentDateChange(e.target.value)}
-                />
+                <div className="flex w-full flex-col gap-1">
+                  <Input
+                    type="date"
+                    value={sentDateInput}
+                    disabled={!isEditing}
+                    onChange={(e) => handleSentDateChange(e.target.value)}
+                  />
+                  {employee.dateRequirementsSent && (
+                    <p className="text-xs text-ink-muted">
+                      {formatDate(employee.dateRequirementsSent, "MMMM d, yyyy")}
+                    </p>
+                  )}
+                </div>
               </FieldGroup>
             </div>
 

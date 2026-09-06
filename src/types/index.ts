@@ -356,6 +356,7 @@ export type Employee = {
   biometricsNo?: string;
   realcognitaEmail?: string;
   homeAddress?: string;
+  homeCity?: string; // city/municipality, filled separately for docx templates like "City, Philippines"
   workingHours?: string;
 };
 

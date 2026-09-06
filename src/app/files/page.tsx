@@ -53,15 +53,27 @@ export default function FilesPage() {
 
   const currentPath = path.join("/");
 
+  const RESERVED_ROOT_NAMES = ["profile", "reports", "templates"];
+
   const refresh = useCallback(async () => {
     if (!supabaseReady) return;
     setLoading(true);
-    const { data } = await supabase.storage.from(BUCKET).list(currentPath, {
+    const { data, error } = await supabase.storage.from(BUCKET).list(currentPath, {
       limit: 500,
       sortBy: { column: "name", order: "asc" },
     });
+    if (error) {
+      notify(`Couldn't load files: ${error.message}`, "warn");
+    }
     const files: StorageEntry[] = (data || [])
-      .filter((f) => f.name !== ".keep")
+      // Supabase Storage returns pseudo-entries with id === null to
+      // represent nested subfolders — these aren't real files and have
+      // no metadata/size, so exclude them from the file listing.
+      .filter((f) => f.id !== null && f.name !== ".keep")
+      // Hide internal system paths (avatars, report attachments, doc
+      // templates) used elsewhere in the app so they don't clutter the
+      // user-facing root view.
+      .filter((f) => !(currentPath === "" && RESERVED_ROOT_NAMES.includes(f.name)))
       .map((f) => ({
         name: f.name,
         isFolder: false,
@@ -71,7 +83,7 @@ export default function FilesPage() {
     setEntries(files);
     setSelected(new Set());
     setLoading(false);
-  }, [currentPath]);
+  }, [currentPath, notify]);
 
   useEffect(() => {
     refresh();
@@ -133,25 +145,44 @@ export default function FilesPage() {
   }
 
   async function handleFiles(fileList: FileList | null) {
-    if (!fileList || fileList.length === 0 || !supabaseReady) return;
+    if (!fileList || fileList.length === 0) return;
+    if (!supabaseReady) {
+      notify("Connect Supabase first to enable file storage.", "warn");
+      return;
+    }
     const files = Array.from(fileList);
     setUploading(true);
     setUploadProgress({ done: 0, total: files.length });
-    const names: string[] = [];
+    const succeeded: string[] = [];
+    const failed: { name: string; reason: string }[] = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const dest = currentPath ? `${currentPath}/${file.name}` : file.name;
-      await supabase.storage.from(BUCKET).upload(dest, file, { upsert: true });
-      names.push(file.name);
+      const { error } = await supabase.storage.from(BUCKET).upload(dest, file, { upsert: true });
+      if (error) {
+        failed.push({ name: file.name, reason: error.message });
+      } else {
+        succeeded.push(file.name);
+      }
       setUploadProgress({ done: i + 1, total: files.length });
     }
     setUploading(false);
     setUploadProgress(null);
     refresh();
-    notify(
-      names.length === 1 ? `File uploaded: "${names[0]}"` : `${names.length} files uploaded`,
-      "created"
-    );
+    if (succeeded.length > 0) {
+      notify(
+        succeeded.length === 1 ? `File uploaded: "${succeeded[0]}"` : `${succeeded.length} files uploaded`,
+        "created"
+      );
+    }
+    if (failed.length > 0) {
+      failed.forEach((f) => {
+        const friendly = /maximum allowed size/i.test(f.reason)
+          ? `"${f.name}" is too large for the current storage limit. Run the updated supabase/schema.sql to raise it, then try again.`
+          : `Upload failed for "${f.name}": ${f.reason}`;
+        notify(friendly, "warn");
+      });
+    }
   }
 
   async function handleDelete(name: string) {

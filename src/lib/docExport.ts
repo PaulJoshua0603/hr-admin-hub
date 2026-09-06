@@ -252,6 +252,29 @@ function replaceExactRunTextSequential(xml: string, exact: string, replacements:
   });
 }
 
+/** Replace everything from the first occurrence of `startAnchor` through the
+ * next occurrence of `endAnchor` (inclusive of both) with `replacement`. */
+function replaceSpan(xml: string, startAnchor: string, endAnchor: string, replacement: string): string {
+  const startIdx = xml.indexOf(startAnchor);
+  if (startIdx === -1) return xml;
+  const endIdx = xml.indexOf(endAnchor, startIdx);
+  if (endIdx === -1) return xml;
+  const endOfSpan = endIdx + endAnchor.length;
+  return xml.slice(0, startIdx) + replacement + xml.slice(endOfSpan);
+}
+
+/** Parse a "6:30am – 3:00pm" style shift string into ["6:30 a.m.", "3:00 p.m."]. */
+function parseWorkingHours(shift?: string): [string, string] {
+  if (!shift) return ["", ""];
+  const parts = shift.split(/[–\-]/).map((s) => s.trim());
+  const toFormal = (t: string) => {
+    const m = t.match(/(\d{1,2}:\d{2})\s*([ap])\.?m\.?/i);
+    if (!m) return t;
+    return `${m[1]} ${m[2].toLowerCase()}.m.`;
+  };
+  return [toFormal(parts[0] || ""), toFormal(parts[1] || "")];
+}
+
 export async function exportContractOfEmploymentDocx(employee: Employee) {
   let blob: Blob;
   if (supabaseReady) {
@@ -286,9 +309,42 @@ export async function exportContractOfEmploymentDocx(employee: Employee) {
   xml = replaceExactRunTextAll(xml, "Employee Position", employee.position || "");
   xml = replaceExactRunTextAll(xml, "Employee Name", employee.name || "");
   xml = replaceExactRunTextAll(xml, "Employee Address", employee.homeAddress || "");
+  xml = replaceExactRunTextAll(xml, "Employee City", employee.homeCity || "");
   // Two "Month Day, Year" placeholders in document order: contract issue
   // date first, then the employment commencement (hire) date.
   xml = replaceExactRunTextSequential(xml, "Month Day, Year", [issueDate, hireDate]);
+
+  // Compensation table amounts — "Basic Salary" row then "Total Monthly
+  // Gross Compensation Income" row, each holding an identical "00,000.00"
+  // placeholder run in that document order.
+  const basicSalaryText = employee.basicSalary || "0.00";
+  const totalGrossText = employee.totalMonthlyGrossCompensation || "0.00";
+  xml = replaceExactRunTextSequential(xml, "00,000.00", [basicSalaryText, totalGrossText]);
+
+  // 13th Month Pay clause references the total gross compensation, but its
+  // amount run is fragmented into "₱" + "00" + ",000.00 " runs — collapse
+  // that whole span into one clean run with the actual figure.
+  xml = replaceSpan(
+    xml,
+    "<w:t>₱</w:t></w:r>",
+    ",000.00 </w:t></w:r>",
+    `<w:t>₱</w:t></w:r><w:r><w:rPr><w:rFonts w:ascii="Garamond" w:eastAsia="Garamond" w:hAnsi="Garamond" w:cs="Garamond"/><w:b/><w:bCs/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:t xml:space="preserve">${escapeXml(
+      totalGrossText
+    )} </w:t></w:r>`
+  );
+
+
+  // Hours of Work — the "0:000 a.m. to 0:00 p.m" placeholder is fragmented
+  // into a dozen single-character runs; collapse it into one clean run.
+  const [workStart, workEnd] = parseWorkingHours(employee.workingHours);
+  xml = replaceSpan(
+    xml,
+    `<w:t xml:space="preserve">Monday to Friday, </w:t></w:r>`,
+    `<w:t>p.m</w:t></w:r><w:proofErr w:type="spellEnd"/>`,
+    `<w:t xml:space="preserve">Monday to Friday, </w:t></w:r><w:r><w:rPr><w:rFonts w:ascii="Garamond" w:eastAsia="Garamond" w:hAnsi="Garamond" w:cs="Garamond"/><w:b/><w:bCs/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:t xml:space="preserve">${escapeXml(
+      workStart
+    )} to ${escapeXml(workEnd)}</w:t></w:r>`
+  );
 
   zip.file(docPath, xml);
   const outBlob = await zip.generateAsync({
