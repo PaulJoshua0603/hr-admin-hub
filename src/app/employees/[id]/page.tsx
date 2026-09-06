@@ -5,7 +5,6 @@ import Link from "next/link";
 import { v4 as uuid } from "uuid";
 import { useSupabaseStore } from "@/lib/useSupabaseStore";
 import { useNotifications } from "@/lib/notificationContext";
-import { supabase, supabaseReady } from "@/lib/supabaseClient";
 import { addDaysISO, addMonthsISO, daysSince, formatDate, isOverdue, nextMondayISO, todayISO } from "@/lib/dates";
 import {
   exportContractOfEmploymentDocx,
@@ -94,6 +93,8 @@ export default function EmployeeDetailPage({
   const [isEditing, setIsEditing] = useState(false);
   const [checklistEditing, setChecklistEditing] = useState(false);
   const [newItemLabels, setNewItemLabels] = useState<Record<string, string>>({});
+  const [draggedItemId, setDraggedItemId] = useState<string | null>(null);
+  const [dragOverItemId, setDragOverItemId] = useState<string | null>(null);
   const [newCategoryTitle, setNewCategoryTitle] = useState("");
   const { notify } = useNotifications();
 
@@ -379,6 +380,23 @@ export default function EmployeeDetailPage({
     });
   }
 
+  function reorderItem(catId: string, draggedId: string, targetId: string) {
+    if (draggedId === targetId) return;
+    const current = employee!.onboardingChecklist || [];
+    update(employee!.id, {
+      onboardingChecklist: current.map((c) => {
+        if (c.id !== catId) return c;
+        const items = [...c.items];
+        const fromIdx = items.findIndex((it) => it.id === draggedId);
+        const toIdx = items.findIndex((it) => it.id === targetId);
+        if (fromIdx === -1 || toIdx === -1) return c;
+        const [moved] = items.splice(fromIdx, 1);
+        items.splice(toIdx, 0, moved);
+        return { ...c, items };
+      }),
+    });
+  }
+
   function handleSaveAll() {
     setIsEditing(false);
     notify(`${employee!.name} — changes saved`, "updated");
@@ -618,6 +636,7 @@ export default function EmployeeDetailPage({
               className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-accent disabled:cursor-not-allowed disabled:opacity-60"
             >
               <option value="">Select shift…</option>
+              <option value="6:30 am – 3:30 pm">6:30 am – 3:30 pm</option>
               <option value="6:30am – 3:00pm">6:30am – 3:00pm</option>
               <option value="7:00am – 4:00pm">7:00am – 4:00pm</option>
               <option value="7:30am – 4:30pm">7:30am – 4:30pm</option>
@@ -902,44 +921,28 @@ export default function EmployeeDetailPage({
             </div>
           </div>
 
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Button variant="ghost" onClick={() => exportRequirementsListDocx(employee)}>
+          <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <Button
+              variant="ghost"
+              className="w-full justify-center text-center"
+              onClick={() => exportRequirementsListDocx(employee)}
+            >
               Download Employee 201 File Checklist (Word)
             </Button>
-            <Button variant="ghost" onClick={() => exportEndorsementLetterDocx(employee)}>
+            <Button
+              variant="ghost"
+              className="w-full justify-center text-center"
+              onClick={() => exportEndorsementLetterDocx(employee)}
+            >
               Download BDO Endorsement Letter
             </Button>
-            <Button variant="ghost" onClick={() => exportContractOfEmploymentDocx(employee)}>
+            <Button
+              variant="ghost"
+              className="w-full justify-center text-center"
+              onClick={() => exportContractOfEmploymentDocx(employee)}
+            >
               Download Contract of Employment (Word)
             </Button>
-          </div>
-
-          <div className="mt-3 flex flex-wrap items-center gap-4">
-            <label className="cursor-pointer text-xs text-ink-muted underline hover:text-accent">
-              Upload BDO forms
-              <input
-                type="file"
-                accept=".pdf,.doc,.docx,.png,.jpg,.jpeg"
-                multiple
-                className="hidden"
-                onChange={async (e) => {
-                  const files = e.target.files;
-                  if (!files || files.length === 0 || !supabaseReady) return;
-                  for (const file of Array.from(files)) {
-                    const dest = `bdo-forms/${employee.id}-${Date.now()}-${file.name}`;
-                    const { error } = await supabase.storage.from("files").upload(dest, file, {
-                      upsert: true,
-                    });
-                    if (error) {
-                      notify(`BDO form upload failed: ${error.message}`, "warn");
-                    } else {
-                      notify(`BDO form uploaded: "${file.name}"`, "created");
-                    }
-                  }
-                  e.target.value = "";
-                }}
-              />
-            </label>
           </div>
 
           <div className="mt-4 flex flex-col gap-5">
@@ -979,30 +982,40 @@ export default function EmployeeDetailPage({
                   {cat.items.length === 0 && !checklistEditing && (
                     <p className="text-xs text-ink-muted">No items yet.</p>
                   )}
-                  {cat.items.map((item, idx) => (
-                    <div key={item.id} className="flex items-center justify-between gap-2">
+                  {cat.items.map((item) => (
+                    <div
+                      key={item.id}
+                      draggable={checklistEditing && isEditing}
+                      onDragStart={() => setDraggedItemId(item.id)}
+                      onDragOver={(e) => {
+                        if (!checklistEditing) return;
+                        e.preventDefault();
+                        setDragOverItemId(item.id);
+                      }}
+                      onDragLeave={() => setDragOverItemId((cur) => (cur === item.id ? null : cur))}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        if (draggedItemId) reorderItem(cat.id, draggedItemId, item.id);
+                        setDraggedItemId(null);
+                        setDragOverItemId(null);
+                      }}
+                      onDragEnd={() => {
+                        setDraggedItemId(null);
+                        setDragOverItemId(null);
+                      }}
+                      className={`flex items-center justify-between gap-2 rounded-md transition-colors ${
+                        checklistEditing ? "cursor-move" : ""
+                      } ${
+                        dragOverItemId === item.id && draggedItemId && draggedItemId !== item.id
+                          ? "bg-accent-soft"
+                          : ""
+                      } ${draggedItemId === item.id ? "opacity-40" : ""}`}
+                    >
                       {checklistEditing ? (
                         <>
-                          <div className="flex shrink-0 flex-col">
-                            <button
-                              type="button"
-                              disabled={!isEditing || idx === 0}
-                              onClick={() => moveItem(cat.id, item.id, -1)}
-                              className="text-ink-muted hover:text-accent disabled:opacity-30"
-                              aria-label="Move up"
-                            >
-                              ▲
-                            </button>
-                            <button
-                              type="button"
-                              disabled={!isEditing || idx === cat.items.length - 1}
-                              onClick={() => moveItem(cat.id, item.id, 1)}
-                              className="text-ink-muted hover:text-accent disabled:opacity-30"
-                              aria-label="Move down"
-                            >
-                              ▼
-                            </button>
-                          </div>
+                          <span className="shrink-0 select-none text-ink-muted" aria-hidden="true">
+                            ⠿
+                          </span>
                           <Checkbox
                             checked={item.checked}
                             disabled={!isEditing}

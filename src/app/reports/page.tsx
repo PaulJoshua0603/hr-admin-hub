@@ -392,7 +392,7 @@ function buildBirthdaySheet(ws: any, employees: Employee[]) {
         e.name,
         e.position || "",
         e.department || "",
-        formatDate(e.birthday!, "MMMM d"),
+        formatDate(e.birthday!, "MMMM d, yyyy"),
       ]);
       styleDataRow(row);
     });
