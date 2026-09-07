@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { v4 as uuid } from "uuid";
+import Link from "next/link";
 import {
   addMonths,
   eachDayOfInterval,
@@ -20,7 +21,7 @@ import type { CalendarEvent, Employee, Task } from "@/types";
 import { EMPLOYMENT_MILESTONE_LABELS, EMPLOYMENT_MILESTONE_MONTHS, type EmploymentMilestoneKey } from "@/types";
 import { addMonthsISO } from "@/lib/dates";
 
-type DayEvent = { label: string; tone: "accent" | "warn" | "success"; time?: string };
+type DayEvent = { label: string; tone: "accent" | "warn" | "success"; time?: string; employeeId?: string };
 
 export default function CalendarPage() {
   const { items: tasks, hydrated: tasksReady } = useSupabaseStore<Task>("hr_tasks", []);
@@ -56,7 +57,7 @@ export default function CalendarPage() {
       if (done) continue;
       map.set(key, [
         ...(map.get(key) || []),
-        { label: `${e.name} requirements`, tone: "warn" },
+        { label: `${e.name} requirements`, tone: "warn", employeeId: e.id },
       ]);
     }
 
@@ -66,7 +67,7 @@ export default function CalendarPage() {
       const key = format(parseISO(e.dateHired), "yyyy-MM-dd");
       map.set(key, [
         ...(map.get(key) || []),
-        { label: `Hired/Onboarded: ${e.name}`, tone: "success" },
+        { label: `Hired/Onboarded: ${e.name}`, tone: "success", employeeId: e.id },
       ]);
     }
 
@@ -79,7 +80,7 @@ export default function CalendarPage() {
         const key = format(parseISO(milestoneDate), "yyyy-MM-dd");
         map.set(key, [
           ...(map.get(key) || []),
-          { label: `${e.name} — ${EMPLOYMENT_MILESTONE_LABELS[mKey]}`, tone: "accent" },
+          { label: `${e.name} — ${EMPLOYMENT_MILESTONE_LABELS[mKey]}`, tone: "accent", employeeId: e.id },
         ]);
       });
     }
@@ -95,7 +96,7 @@ export default function CalendarPage() {
       );
       map.set(key, [
         ...(map.get(key) || []),
-        { label: `🎂 ${e.name}'s Birthday`, tone: "warn" },
+        { label: `🎂 ${e.name}'s Birthday`, tone: "warn", employeeId: e.id },
       ]);
     }
 
@@ -166,10 +167,15 @@ export default function CalendarPage() {
             const inMonth = isSameMonth(day, month);
             const today = isSameDay(day, new Date());
             return (
-              <button
+              <div
                 key={key}
+                role="button"
+                tabIndex={0}
                 onClick={() => openNewEvent(key)}
-                className={`min-h-[86px] rounded-md border p-1.5 text-left align-top transition-colors hover:border-accent ${
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") openNewEvent(key);
+                }}
+                className={`min-h-[86px] cursor-pointer rounded-md border p-1.5 text-left align-top transition-colors hover:border-accent ${
                   inMonth ? "border-border bg-surface" : "border-transparent bg-background/40"
                 } ${today ? "ring-1 ring-accent" : ""}`}
               >
@@ -177,21 +183,35 @@ export default function CalendarPage() {
                   {format(day, "d")}
                 </p>
                 <div className="mt-1 flex flex-col gap-1">
-                  {dayEvents.slice(0, 2).map((ev, i) => (
-                    <span key={i} className="block">
-                      <Pill tone={ev.tone}>
-                        {ev.time ? `${ev.time} · ` : ""}
-                        {ev.label}
-                      </Pill>
-                    </span>
-                  ))}
+                  {dayEvents.slice(0, 2).map((ev, i) =>
+                    ev.employeeId ? (
+                      <Link
+                        key={i}
+                        href={`/employees/${ev.employeeId}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="block hover:opacity-80"
+                      >
+                        <Pill tone={ev.tone}>
+                          {ev.time ? `${ev.time} · ` : ""}
+                          {ev.label}
+                        </Pill>
+                      </Link>
+                    ) : (
+                      <span key={i} className="block">
+                        <Pill tone={ev.tone}>
+                          {ev.time ? `${ev.time} · ` : ""}
+                          {ev.label}
+                        </Pill>
+                      </span>
+                    )
+                  )}
                   {dayEvents.length > 2 && (
                     <span className="text-[10px] text-ink-muted">
                       +{dayEvents.length - 2} more
                     </span>
                   )}
                 </div>
-              </button>
+              </div>
             );
           })}
         </div>

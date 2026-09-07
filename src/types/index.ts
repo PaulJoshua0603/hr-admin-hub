@@ -275,8 +275,11 @@ export const RESIGNED_STATUS_LABELS: Record<ResignedStatus, string> = {
   resigned: "Resigned",
 };
 
+export type COECategory = "withPurpose" | "endOfEmployment";
+
 export type COERequest = {
   id: string;
+  category: COECategory;
   employeeName: string;
   position: string;
   department: string;
@@ -350,6 +353,7 @@ export type Employee = {
   sharedFolderNote?: string; // notes/link for the employee's shared folder
   isRegular: boolean; // stays Regular until manually changed
   resignedStatus?: ResignedStatus;
+  reasonForLeaving?: string;
   coeIssued?: boolean;
   form2316Issued?: boolean;
   lastDay?: string; // ISO date - offboarding last day

@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { addMonths, parseISO } from "date-fns";
 import { useSupabaseStore } from "@/lib/useSupabaseStore";
 import { formatDate, isOverdue } from "@/lib/dates";
 import { Card, Pill } from "@/components/ui";
@@ -9,7 +10,16 @@ import { useNotifications } from "@/lib/notificationContext";
 import { useAuth } from "@/lib/authContext";
 import { TasksIcon, EmployeesIcon, ReportsIcon, ChevronIcon } from "@/components/icons";
 import { getMissingCriticalItems, getLackingRequirements, type Employee, type ReminderNote, type Task } from "@/types";
-import { computeEmployeeAlerts } from "@/lib/employeeAlerts";
+
+function isProfileComplete(e: Employee): boolean {
+  const hasDetails = !!e.birthday && !!e.dateHired;
+  const hasCompensation = !!e.basicSalary && !!e.totalMonthlyGrossCompensation;
+  const hasIdentification =
+    !!e.philhealthNo && !!e.companyIdNumber && !!e.biometricsNo && !!e.realcognitaEmail && !!e.homeAddress;
+  const hasRequirements = getLackingRequirements(e).length === 0;
+  const hasOnboarding = (e.onboardingChecklist?.length || 0) > 0;
+  return hasDetails && hasCompensation && hasIdentification && hasRequirements && hasOnboarding;
+}
 
 function getFirstName(fullName?: string | null, email?: string | null): string {
   const name = fullName?.trim();
@@ -51,9 +61,15 @@ export default function DashboardPage() {
   const completionPct =
     employees.length > 0 ? Math.round((employeesComplete / employees.length) * 100) : 0;
 
-  const employeeAlerts = computeEmployeeAlerts(employees);
-  const milestoneAlerts = employeeAlerts.filter(
-    (a) => a.id.includes("-milestone-") || a.id.includes("-coe-") || a.id.includes("-profile-")
+  const allBirthdays = employees.filter((e) => e.birthday);
+  const third = employees.filter((e) => e.dateHired && !e.lastDay);
+  const sixth = third;
+  const oneYear = third;
+  const incompleteRecords = employees.filter(
+    (e) => !isProfileComplete(e) || getLackingRequirements(e).length > 0
+  );
+  const separatedEmployees = employees.filter(
+    (e) => !!e.lastDay || e.resignedStatus === "resigned"
   );
 
   const firstName = getFirstName(
@@ -157,46 +173,70 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      {employeesMissingCritical.length > 0 && (
-        <Card hover className="stagger-item mb-6 border-warn/30 bg-warn-soft" style={{ animationDelay: "440ms" }}>
-          <h2 className="font-display text-lg text-warn">
-            Missing Government IDs, NBI, or Medical Exam
-          </h2>
-          <div className="mt-3 flex flex-col gap-1">
-            {employeesMissingCritical.slice(0, 8).map(({ employee: e, missing }) => (
-              <Link
-                key={e.id}
-                href={`/employees/${e.id}`}
-                className="flex items-center justify-between rounded-lg px-2 py-2 text-sm transition-colors hover:bg-surface"
-              >
-                <span className="text-ink">{e.name}</span>
-                <span className="text-xs text-warn">{missing.join(", ")}</span>
-              </Link>
-            ))}
-          </div>
-        </Card>
-      )}
+      <DashboardWidget
+        title="🎂 Birthdays"
+        emptyText="No birthdays on file."
+        items={allBirthdays}
+        renderDetail={(e) => formatDate(e.birthday!, "MMMM d")}
+        tone="warn"
+        groupByBirthMonth
+        sortDate={(e) => e.birthday}
+      />
 
-      {milestoneAlerts.length > 0 && (
-        <Card hover className="stagger-item mb-6" style={{ animationDelay: "460ms" }}>
-          <h2 className="font-display text-lg text-ink">Milestones & Offboarding</h2>
-          <p className="mt-0.5 text-xs text-ink-muted">
-            Milestones, COE prep, and incomplete profiles (missing ID/Biometrics No.).
-          </p>
-          <div className="mt-3 flex flex-col gap-1">
-            {milestoneAlerts.map((a) => (
-              <Link
-                key={a.id}
-                href={a.href}
-                className="flex items-center justify-between gap-3 rounded-lg px-2 py-2 text-sm transition-colors hover:bg-background"
-              >
-                <span className="text-ink">{a.label}</span>
-                <Pill tone={a.tone}>{a.detail}</Pill>
-              </Link>
-            ))}
-          </div>
-        </Card>
-      )}
+      <div className="mb-6 grid gap-6 lg:grid-cols-3">
+        <DashboardWidget
+          title="3rd-Month Milestones"
+          emptyText="No employees with an onboarding date yet."
+          items={third}
+          renderDetail={(e) => formatDate(addMonths(parseISO(e.dateHired!), 3).toISOString())}
+          tone="accent"
+          bare
+          sortDate={(e) => addMonths(parseISO(e.dateHired!), 3).toISOString()}
+        />
+        <DashboardWidget
+          title="6th-Month Appraisal/Regularization"
+          emptyText="No employees with an onboarding date yet."
+          items={sixth}
+          renderDetail={(e) => formatDate(addMonths(parseISO(e.dateHired!), 6).toISOString())}
+          tone="accent"
+          bare
+          sortDate={(e) => addMonths(parseISO(e.dateHired!), 6).toISOString()}
+        />
+        <DashboardWidget
+          title="1-Year Anniversary"
+          emptyText="No employees with an onboarding date yet."
+          items={oneYear}
+          renderDetail={(e) => formatDate(addMonths(parseISO(e.dateHired!), 12).toISOString())}
+          tone="success"
+          bare
+          sortDate={(e) => addMonths(parseISO(e.dateHired!), 12).toISOString()}
+        />
+      </div>
+
+      <div className="mb-6 grid gap-6 lg:grid-cols-2">
+        <DashboardWidget
+          title="Incomplete / Missing Records"
+          emptyText="Everyone's records are complete."
+          items={incompleteRecords}
+          renderDetail={(e) =>
+            getLackingRequirements(e).length > 0
+              ? `Lacking: ${getLackingRequirements(e).join(", ")}`
+              : "Missing profile details"
+          }
+          tone="warn"
+          bare
+          sortDate={(e) => e.dateAdded}
+        />
+        <DashboardWidget
+          title="Separated / Inactive Employees"
+          emptyText="No separated employees on file."
+          items={separatedEmployees}
+          renderDetail={(e) => (e.lastDay ? `Last day ${formatDate(e.lastDay)}` : "Resigned")}
+          tone="neutral"
+          bare
+          sortDate={(e) => e.lastDay || e.dateAdded}
+        />
+      </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card hover className="stagger-item" style={{ animationDelay: "480ms" }}>
@@ -238,6 +278,127 @@ export default function DashboardPage() {
         <NotificationsFeed />
       </div>
     </div>
+  );
+}
+
+function DashboardWidget({
+  title,
+  emptyText,
+  items,
+  renderDetail,
+  tone,
+  bare = false,
+  groupByBirthMonth = false,
+  sortDate,
+}: {
+  title: string;
+  emptyText: string;
+  items: Employee[];
+  renderDetail: (e: Employee) => string;
+  tone: "warn" | "accent" | "success" | "neutral";
+  bare?: boolean;
+  groupByBirthMonth?: boolean;
+  sortDate?: (e: Employee) => string | undefined;
+}) {
+  const [open, setOpen] = useState(false);
+  const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest");
+
+  const sortedItems = useMemo(() => {
+    if (!sortDate) return items;
+    return [...items].sort((a, b) => {
+      const da = sortDate(a) || "";
+      const db = sortDate(b) || "";
+      const diff = da < db ? -1 : da > db ? 1 : 0;
+      return sortOrder === "oldest" ? diff : -diff;
+    });
+  }, [items, sortDate, sortOrder]);
+
+  const monthGroups = useMemo(() => {
+    if (!groupByBirthMonth) return null;
+    const groups: { month: string; items: Employee[] }[] = Array.from({ length: 12 }, (_, m) => ({
+      month: new Date(2000, m, 1).toLocaleString(undefined, { month: "long" }),
+      items: [] as Employee[],
+    }));
+    sortedItems.forEach((e) => {
+      if (!e.birthday) return;
+      groups[new Date(e.birthday).getMonth()].items.push(e);
+    });
+    return groups.filter((g) => g.items.length > 0);
+  }, [sortedItems, groupByBirthMonth]);
+
+  return (
+    <Card hover className={`stagger-item ${bare ? "" : "mb-6"}`}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center justify-between gap-3 text-left"
+      >
+        <h2 className="font-display text-lg text-ink">{title}</h2>
+        <div className="flex items-center gap-2">
+          <Pill tone={tone}>{items.length}</Pill>
+          <span className={`text-ink-muted transition-transform ${open ? "rotate-90" : ""}`}>›</span>
+        </div>
+      </button>
+
+      {open && (
+        <div className="mt-3">
+          {items.length === 0 && <p className="text-sm text-ink-muted">{emptyText}</p>}
+
+          {items.length > 0 && sortDate && (
+            <div className="mb-3 flex gap-1 rounded-lg bg-background p-1 w-fit">
+              {(["newest", "oldest"] as const).map((s) => (
+                <button
+                  key={s}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSortOrder(s);
+                  }}
+                  className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                    sortOrder === s ? "bg-surface text-accent shadow-sm" : "text-ink-muted hover:text-ink"
+                  }`}
+                >
+                  {s === "newest" ? "Newest first" : "Oldest first"}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {groupByBirthMonth && monthGroups
+            ? monthGroups.map((g) => (
+                <div key={g.month} className="mb-3">
+                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-ink-muted">
+                    {g.month}
+                  </p>
+                  <div className="flex flex-col gap-1">
+                    {g.items.map((e) => (
+                      <Link
+                        key={e.id}
+                        href={`/employees/${e.id}`}
+                        className="flex items-center justify-between gap-3 rounded-lg px-2 py-2 text-sm transition-colors hover:bg-background"
+                      >
+                        <span className="min-w-0 truncate text-ink">{e.name}</span>
+                        <Pill tone={tone}>{renderDetail(e)}</Pill>
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              ))
+            : (
+                <div className="flex flex-col gap-1">
+                  {sortedItems.map((e) => (
+                    <Link
+                      key={e.id}
+                      href={`/employees/${e.id}`}
+                      className="flex items-center justify-between gap-3 rounded-lg px-2 py-2 text-sm transition-colors hover:bg-background"
+                    >
+                      <span className="min-w-0 truncate text-ink">{e.name}</span>
+                      <Pill tone={tone}>{renderDetail(e)}</Pill>
+                    </Link>
+                  ))}
+                </div>
+              )}
+        </div>
+      )}
+    </Card>
   );
 }
 

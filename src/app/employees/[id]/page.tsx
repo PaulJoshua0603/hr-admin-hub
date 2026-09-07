@@ -259,39 +259,6 @@ export default function EmployeeDetailPage({
     );
   }
 
-  function sendMilestoneReminders() {
-    if (!employee!.dateHired) return;
-    const keys = Object.keys(EMPLOYMENT_MILESTONE_LABELS) as EmploymentMilestoneKey[];
-    let created = 0;
-    const now = todayISO();
-    keys.forEach((key) => {
-      const milestoneISO = addMonthsISO(employee!.dateHired!, EMPLOYMENT_MILESTONE_MONTHS[key]);
-      EMPLOYMENT_MILESTONE_REMINDER_OFFSETS[key].forEach((reminder) => {
-        const dueISO = addDaysISO(milestoneISO, reminder.offsetDays);
-        const title = `${employee!.name} — ${EMPLOYMENT_MILESTONE_LABELS[key]} (${reminder.label})`;
-        const alreadyExists = tasks.some((t) => t.title === title);
-        if (alreadyExists) return;
-        addTask({
-          id: uuid(),
-          title,
-          notes: "Auto-generated employment milestone reminder.",
-          createdAt: now,
-          inputDate: now,
-          dateNeeded: dueISO,
-          accomplished: false,
-        });
-        created += 1;
-      });
-    });
-    update(employee!.id, { milestoneRemindersSentAt: todayISO() });
-    notify(
-      created > 0
-        ? `${employee!.name} — ${created} milestone reminder(s) added to Tasks`
-        : `${employee!.name} — milestone reminders already exist`,
-      "updated"
-    );
-  }
-
 
 
   function addCategory() {
@@ -659,16 +626,33 @@ export default function EmployeeDetailPage({
             <div className="flex flex-wrap items-end gap-3">
               <FieldGroup label="Date MC sent pre-employment requirements">
                 <div className="flex w-full flex-col gap-1">
-                  <Input
-                    type="date"
-                    value={sentDateInput}
-                    disabled={!isEditing}
-                    onChange={(e) => handleSentDateChange(e.target.value)}
-                  />
-                  {employee.dateRequirementsSent && (
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="date"
+                      value={sentDateInput}
+                      disabled={!isEditing}
+                      onChange={(e) => handleSentDateChange(e.target.value)}
+                    />
+                    <Button
+                      variant="ghost"
+                      disabled={!isEditing || !sentDateInput}
+                      onClick={() => {
+                        setSentDateInput("");
+                        update(employee.id, {
+                          dateRequirementsSent: undefined,
+                        });
+                        notify(`${employee.name} — requirements sent date cleared`, "updated");
+                      }}
+                    >
+                      Clear
+                    </Button>
+                  </div>
+                  {employee.dateRequirementsSent ? (
                     <p className="text-xs text-ink-muted">
                       {formatDate(employee.dateRequirementsSent, "MMMM d, yyyy")}
                     </p>
+                  ) : (
+                    <p className="text-xs text-ink-muted">N/A — Not Sent Yet</p>
                   )}
                 </div>
               </FieldGroup>
@@ -798,16 +782,10 @@ export default function EmployeeDetailPage({
         </Card>
 
         <Card>
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="font-display text-lg text-ink">Employment milestones</h2>
-            <Button
-              variant="ghost"
-              disabled={!employee.dateHired}
-              onClick={sendMilestoneReminders}
-            >
-              Send milestone reminders
-            </Button>
-          </div>
+          <h2 className="font-display text-lg text-ink">Employment milestones</h2>
+          <p className="mt-1 text-xs text-ink-muted">
+            Milestone alerts trigger automatically on the Dashboard — no action needed here.
+          </p>
           <div className="mt-3 flex flex-wrap items-end gap-3">
             <Checkbox
               checked={employee.isRegular}
@@ -833,11 +811,6 @@ export default function EmployeeDetailPage({
           {milestones.length === 0 && (
             <p className="mt-4 text-xs text-ink-muted">
               Set the onboarding date above to auto-calculate milestones.
-            </p>
-          )}
-          {employee.milestoneRemindersSentAt && (
-            <p className="mt-2 text-xs text-ink-muted">
-              Reminders last sent {formatDate(employee.milestoneRemindersSentAt)}
             </p>
           )}
 
@@ -880,6 +853,13 @@ export default function EmployeeDetailPage({
                 <Button variant="ghost" disabled={!isEditing} onClick={saveLastPayDate}>
                   Save
                 </Button>
+              </FieldGroup>
+              <FieldGroup label="Reason for Leaving">
+                <Input
+                  value={employee.reasonForLeaving || ""}
+                  disabled={!isEditing}
+                  onChange={(e) => update(employee.id, { reasonForLeaving: e.target.value })}
+                />
               </FieldGroup>
             </div>
             <div className="mt-4 flex flex-wrap items-center gap-4">

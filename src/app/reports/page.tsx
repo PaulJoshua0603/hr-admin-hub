@@ -36,6 +36,7 @@ const STANDARD_HEADERS = [
 ];
 
 const COE_HEADERS = [
+  "Category",
   "Employee Name",
   "Position",
   "Department",
@@ -43,6 +44,11 @@ const COE_HEADERS = [
   "Date Requested",
   "Date COE Given",
 ];
+
+const COE_CATEGORY_LABELS: Record<string, string> = {
+  withPurpose: "COE with Purpose",
+  endOfEmployment: "End of Employment",
+};
 
 type StandardRow = {
   name: string;
@@ -116,7 +122,13 @@ export default function ReportsPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `HR_Admin_Employee_Report_${format(new Date(), "yyyy-MM-dd")}.xlsx`;
+      const monday = startOfWeek(new Date(), { weekStartsOn: 1 });
+      const friday = addDays(monday, 4);
+      const sameMonth = monday.getMonth() === friday.getMonth();
+      const coverage = sameMonth
+        ? `${format(monday, "MMMM d")}-${format(friday, "d, yyyy")}`
+        : `${format(monday, "MMMM d")}-${format(friday, "MMMM d, yyyy")}`;
+      a.download = `Weekly Report of ${coverage}.xlsx`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -345,6 +357,7 @@ function buildGroupedSheet(ws: any, groups: Group[], coeRequests: COERequest[]) 
   } else {
     coeRequests.forEach((c) => {
       const row = ws.addRow([
+        COE_CATEGORY_LABELS[c.category] || "COE with Purpose",
         c.employeeName,
         c.position || "",
         c.department || "",

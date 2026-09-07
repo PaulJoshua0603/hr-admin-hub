@@ -60,7 +60,7 @@ function HeaderClock() {
 
 const NAV = [
   { href: "/", label: "Dashboard", icon: DashboardIcon },
-  { href: "/tasks", label: "Tasks & Notes", icon: TasksIcon },
+  { href: "/tasks", label: "Notes", icon: TasksIcon },
   { href: "/employees", label: "Employees", icon: EmployeesIcon },
   { href: "/reports", label: "Reports", icon: ReportsIcon },
   { href: "/calendar", label: "Calendar", icon: CalendarIcon },

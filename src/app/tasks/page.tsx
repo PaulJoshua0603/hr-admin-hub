@@ -5,6 +5,7 @@ import { v4 as uuid } from "uuid";
 import { useSupabaseStore } from "@/lib/useSupabaseStore";
 import { formatDate, isOverdue, todayISO } from "@/lib/dates";
 import { Button, Card, Input, Pill, SectionHeading, Textarea } from "@/components/ui";
+import { RichTextEditor } from "@/components/RichTextEditor";
 import type { CalendarEvent, RecurrenceLabel, ReminderNote, Task } from "@/types";
 import { REMINDER_NOTE_ID } from "@/types";
 import { useNotifications } from "@/lib/notificationContext";
@@ -456,9 +457,22 @@ function RemindersSection() {
     return drafts[note.id] !== undefined && drafts[note.id] !== note.content;
   }
 
+  function stripHtml(html: string): string {
+    if (typeof document === "undefined") return html.replace(/<[^>]+>/g, " ");
+    const div = document.createElement("div");
+    div.innerHTML = html;
+    return div.textContent || div.innerText || "";
+  }
+
   function addNote(initialContent = "") {
     const id = uuid();
-    add({ id, content: initialContent, updatedAt: todayISO() });
+    const html = initialContent
+      ? initialContent
+          .split("\n")
+          .map((line) => `<p>${line || "&nbsp;"}</p>`)
+          .join("")
+      : "";
+    add({ id, content: html, updatedAt: todayISO() });
     if (initialContent) notify("Note added", "created");
   }
 
@@ -479,7 +493,7 @@ function RemindersSection() {
   }
 
   function openEventForm(note: ReminderNote) {
-    const content = draftFor(note);
+    const content = stripHtml(draftFor(note));
     const firstLine = content.split("\n").find((l) => l.trim().length > 0) || "";
     setEventTitle(firstLine.trim().slice(0, 120));
     setEventDate(todayISO().slice(0, 10));
@@ -580,14 +594,13 @@ function RemindersSection() {
             const dirty = isDirty(note);
             return (
               <Card key={note.id}>
-                <Textarea
+                <RichTextEditor
                   value={draftFor(note)}
-                  onChange={(e) =>
-                    setDrafts((prev) => ({ ...prev, [note.id]: e.target.value }))
+                  onChange={(html) =>
+                    setDrafts((prev) => ({ ...prev, [note.id]: html }))
                   }
-                  placeholder="Check Outlook email…&#10;Follow up with payroll…&#10;Renew business permit…"
-                  rows={6}
-                  className="resize-y"
+                  placeholder="Check Outlook email… Follow up with payroll… Renew business permit…"
+                  minHeight="140px"
                 />
                 <div className="mt-3 flex items-center justify-between gap-3">
                   <span className="text-xs text-ink-muted">
