@@ -10,6 +10,11 @@ import {
   exportContractOfEmploymentDocx,
   exportEndorsementLetterDocx,
   exportRequirementsListDocx,
+  exportCOEWithPurposeDocx,
+  exportCOEResignedDocx,
+  listEmployeeCOEFiles,
+  downloadEmployeeCOEFile,
+  deleteEmployeeCOEFile,
 } from "@/lib/docExport";
 import {
   Button,
@@ -45,6 +50,8 @@ import {
   type RequirementStatus,
   type ResignedStatus,
   type Task,
+  type COERequest,
+  type COECategory,
 } from "@/types";
 
 const LAST_PAY_DAYS_AFTER_LAST_DAY = 35;
@@ -69,6 +76,8 @@ export default function EmployeeDetailPage({
     []
   );
   const { items: tasks, add: addTask } = useSupabaseStore<Task>("hr_tasks", []);
+  const { items: coeRequests, add: addCoeRequest, update: updateCoeRequest, remove: removeCoeRequest } =
+    useSupabaseStore<COERequest>("hr_coe_requests", []);
   const employee = employees.find((e) => e.id === id);
   const [birthdayInput, setBirthdayInput] = useState(
     employee?.birthday ? employee.birthday.slice(0, 10) : ""
@@ -93,6 +102,12 @@ export default function EmployeeDetailPage({
   const [isEditing, setIsEditing] = useState(false);
   const [checklistEditing, setChecklistEditing] = useState(false);
   const [newItemLabels, setNewItemLabels] = useState<Record<string, string>>({});
+  const [coeFiles, setCoeFiles] = useState<{ name: string; updated_at?: string | null }[]>([]);
+  const [purposeForm, setPurposeForm] = useState({ purpose: "", dateRequested: todayISO().slice(0, 10) });
+  const [resignedForm, setResignedForm] = useState({
+    dateRequested: todayISO().slice(0, 10),
+    separationDate: "",
+  });
   const [draggedItemId, setDraggedItemId] = useState<string | null>(null);
   const [dragOverItemId, setDragOverItemId] = useState<string | null>(null);
   const [newCategoryTitle, setNewCategoryTitle] = useState("");
@@ -131,6 +146,58 @@ export default function EmployeeDetailPage({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hydrated, employee?.id, employee?.dateHired, employee?.resignedStatus, employee?.isRegular]);
+
+  const refreshCoeFiles = async () => {
+    if (!employee) return;
+    const files = await listEmployeeCOEFiles(employee.id);
+    setCoeFiles(files);
+  };
+
+  useEffect(() => {
+    if (!hydrated || !employee) return;
+    refreshCoeFiles();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hydrated, employee?.id]);
+
+  async function generateCOEWithPurpose() {
+    if (!employee || !purposeForm.purpose.trim()) return;
+    addCoeRequest({
+      id: uuid(),
+      category: "withPurpose",
+      employeeName: employee!.name,
+      position: employee!.position || "",
+      department: employee!.department || "",
+      purpose: purposeForm.purpose.trim(),
+      dateRequested: new Date(purposeForm.dateRequested).toISOString(),
+    });
+    await exportCOEWithPurposeDocx(employee!.name, purposeForm.purpose.trim(), employee!);
+    notify(`COE with Purpose generated for "${employee!.name}"`, "created");
+    setPurposeForm({ purpose: "", dateRequested: todayISO().slice(0, 10) });
+    refreshCoeFiles();
+  }
+
+  async function generateCOEResigned() {
+    if (!employee) return;
+    const sepISO = resignedForm.separationDate
+      ? new Date(resignedForm.separationDate).toISOString()
+      : employee!.lastDay;
+    if (sepISO && sepISO !== employee!.lastDay) {
+      update(employee!.id, { lastDay: sepISO, resignedStatus: "resigned" });
+    }
+    addCoeRequest({
+      id: uuid(),
+      category: "endOfEmployment",
+      employeeName: employee!.name,
+      position: employee!.position || "",
+      department: employee!.department || "",
+      purpose: "",
+      dateRequested: new Date(resignedForm.dateRequested).toISOString(),
+    });
+    await exportCOEResignedDocx(employee!.name, { ...employee!, lastDay: sepISO || employee!.lastDay });
+    notify(`COE for Resigned generated for "${employee!.name}"`, "created");
+    setResignedForm({ dateRequested: todayISO().slice(0, 10), separationDate: "" });
+    refreshCoeFiles();
+  }
 
   if (!hydrated) return null;
   if (!employee) {
@@ -394,7 +461,7 @@ export default function EmployeeDetailPage({
     });
   }
 
-  const milestones = employee.dateHired
+  const milestones = employee.dateHired && !employee.lastDay
     ? (Object.keys(EMPLOYMENT_MILESTONE_LABELS) as EmploymentMilestoneKey[]).map((key) => ({
         key,
         label: EMPLOYMENT_MILESTONE_LABELS[key],
@@ -595,6 +662,18 @@ export default function EmployeeDetailPage({
               onChange={(e) => update(employee.id, { homeCity: e.target.value })}
             />
           </FieldGroup>
+          <FieldGroup label="Gender">
+            <select
+              value={employee.gender || ""}
+              disabled={!isEditing}
+              onChange={(e) => update(employee.id, { gender: e.target.value })}
+              className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-accent disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <option value="">Select…</option>
+              <option value="Female">Female</option>
+              <option value="Male">Male</option>
+            </select>
+          </FieldGroup>
           <FieldGroup label="Working Hours">
             <select
               value={employee.workingHours || ""}
@@ -623,41 +702,6 @@ export default function EmployeeDetailPage({
           </div>
 
           <div className="mt-4 rounded-md bg-background p-3">
-            <div className="flex flex-wrap items-end gap-3">
-              <FieldGroup label="Date MC sent pre-employment requirements">
-                <div className="flex w-full flex-col gap-1">
-                  <div className="flex items-center gap-2">
-                    <Input
-                      type="date"
-                      value={sentDateInput}
-                      disabled={!isEditing}
-                      onChange={(e) => handleSentDateChange(e.target.value)}
-                    />
-                    <Button
-                      variant="ghost"
-                      disabled={!isEditing || !sentDateInput}
-                      onClick={() => {
-                        setSentDateInput("");
-                        update(employee.id, {
-                          dateRequirementsSent: undefined,
-                        });
-                        notify(`${employee.name} — requirements sent date cleared`, "updated");
-                      }}
-                    >
-                      Clear
-                    </Button>
-                  </div>
-                  {employee.dateRequirementsSent ? (
-                    <p className="text-xs text-ink-muted">
-                      {formatDate(employee.dateRequirementsSent, "MMMM d, yyyy")}
-                    </p>
-                  ) : (
-                    <p className="text-xs text-ink-muted">N/A — Not Sent Yet</p>
-                  )}
-                </div>
-              </FieldGroup>
-            </div>
-
             {employee.dateRequirementsSent && (
               <div className="mt-3 flex flex-col gap-1">
                 <p className="text-xs text-ink-muted">
@@ -784,16 +828,10 @@ export default function EmployeeDetailPage({
         <Card>
           <h2 className="font-display text-lg text-ink">Employment milestones</h2>
           <p className="mt-1 text-xs text-ink-muted">
-            Milestone alerts trigger automatically on the Dashboard — no action needed here.
+            {employee.lastDay
+              ? "Milestone tracking is hidden — a COE for Resigned has been generated for this employee."
+              : "Milestone alerts trigger automatically on the Dashboard — no action needed here."}
           </p>
-          <div className="mt-3 flex flex-wrap items-end gap-3">
-            <Checkbox
-              checked={employee.isRegular}
-              disabled={!isEditing}
-              onChange={(c) => update(employee.id, { isRegular: c })}
-              label="Regular employee (stays Regular until changed here)"
-            />
-          </div>
 
           {milestones.length > 0 && (
             <ul className="mt-4 flex flex-col gap-2">
@@ -808,74 +846,117 @@ export default function EmployeeDetailPage({
               ))}
             </ul>
           )}
-          {milestones.length === 0 && (
+          {milestones.length === 0 && !employee.lastDay && (
             <p className="mt-4 text-xs text-ink-muted">
               Set the onboarding date above to auto-calculate milestones.
             </p>
           )}
 
+          <div className="mt-4 border-t border-border pt-4">
+            <h3 className="text-sm font-semibold text-ink">Generated COE Files</h3>
+            {coeFiles.length === 0 ? (
+              <p className="mt-1 text-xs text-ink-muted">
+                No COE documents generated yet — use the Offboarding section below.
+              </p>
+            ) : (
+              <ul className="mt-2 flex flex-col gap-1">
+                {coeFiles.map((f) => (
+                  <li
+                    key={f.name}
+                    className="flex items-center justify-between gap-2 rounded-md bg-background px-3 py-2 text-sm"
+                  >
+                    <button
+                      onClick={() => downloadEmployeeCOEFile(employee.id, f.name)}
+                      className="min-w-0 truncate text-left text-ink hover:text-accent"
+                      title={f.name}
+                    >
+                      {f.name.replace(/^\d+-/, "")}
+                    </button>
+                    <button
+                      onClick={async () => {
+                        await deleteEmployeeCOEFile(employee.id, f.name);
+                        notify(`COE file deleted: "${f.name.replace(/^\d+-/, "")}"`, "deleted");
+                        refreshCoeFiles();
+                      }}
+                      className="shrink-0 text-xs text-ink-muted hover:text-warn"
+                    >
+                      Delete
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
           <div className="mt-6 border-t border-border pt-4">
-            <h3 className="font-display text-sm text-ink">Offboarding</h3>
-            <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <FieldGroup label="Resigned Status">
-                <select
-                  value={employee.resignedStatus || "active"}
+            <h3 className="font-display text-sm text-ink">Offboarding — Certificate of Employment (COE) Tracking</h3>
+
+            <div className="mt-3 rounded-md border border-border p-3">
+              <p className="text-sm font-medium text-ink">COE with Purpose</p>
+              <p className="text-xs text-ink-muted">For employees still actively employed.</p>
+              <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <Input
+                  placeholder="Purpose (e.g. Bank loan)"
+                  value={purposeForm.purpose}
                   disabled={!isEditing}
-                  onChange={(e) =>
-                    update(employee.id, {
-                      resignedStatus: e.target.value as ResignedStatus,
-                    })
-                  }
-                  className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-accent disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {(Object.keys(RESIGNED_STATUS_LABELS) as ResignedStatus[]).map((s) => (
-                    <option key={s} value={s}>
-                      {RESIGNED_STATUS_LABELS[s]}
-                    </option>
-                  ))}
-                </select>
-              </FieldGroup>
-              <FieldGroup label="Last Day">
+                  onChange={(e) => setPurposeForm((f) => ({ ...f, purpose: e.target.value }))}
+                  className="sm:col-span-2"
+                />
                 <Input
                   type="date"
-                  value={lastDayInput}
+                  value={purposeForm.dateRequested}
                   disabled={!isEditing}
-                  onChange={(e) => handleLastDayChange(e.target.value)}
+                  onChange={(e) => setPurposeForm((f) => ({ ...f, dateRequested: e.target.value }))}
                 />
-              </FieldGroup>
-              <FieldGroup label="Last Pay Date (auto: Last Day + 35 days)">
-                <Input
-                  type="date"
-                  value={lastPayDateInput}
-                  disabled={!isEditing}
-                  onChange={(e) => setLastPayDateInput(e.target.value)}
-                />
-                <Button variant="ghost" disabled={!isEditing} onClick={saveLastPayDate}>
-                  Save
-                </Button>
-              </FieldGroup>
-              <FieldGroup label="Reason for Leaving">
-                <Input
-                  value={employee.reasonForLeaving || ""}
-                  disabled={!isEditing}
-                  onChange={(e) => update(employee.id, { reasonForLeaving: e.target.value })}
-                />
-              </FieldGroup>
+              </div>
+              <Button
+                className="mt-2"
+                disabled={!isEditing || !purposeForm.purpose.trim()}
+                onClick={generateCOEWithPurpose}
+              >
+                Generate & Log COE
+              </Button>
             </div>
-            <div className="mt-4 flex flex-wrap items-center gap-4">
-              <Checkbox
-                checked={employee.coeIssued || false}
-                disabled={!isEditing}
-                onChange={(c) => update(employee.id, { coeIssued: c })}
-                label="COE Issued"
-              />
-              <Checkbox
-                checked={employee.form2316Issued || false}
-                disabled={!isEditing}
-                onChange={(c) => update(employee.id, { form2316Issued: c })}
-                label="2316 Issued"
-              />
+
+            <div className="mt-3 rounded-md border border-border p-3">
+              <p className="text-sm font-medium text-ink">COE for Resigned</p>
+              <p className="text-xs text-ink-muted">
+                Generating this sets the employee&apos;s Last Day and hides milestone tracking.
+              </p>
+              <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <label className="flex flex-col gap-1 text-xs text-ink-muted">
+                  Date requested
+                  <Input
+                    type="date"
+                    value={resignedForm.dateRequested}
+                    disabled={!isEditing}
+                    onChange={(e) => setResignedForm((f) => ({ ...f, dateRequested: e.target.value }))}
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-xs text-ink-muted">
+                  Separation / Last Day
+                  <Input
+                    type="date"
+                    value={resignedForm.separationDate || (employee.lastDay ? employee.lastDay.slice(0, 10) : "")}
+                    disabled={!isEditing}
+                    onChange={(e) => setResignedForm((f) => ({ ...f, separationDate: e.target.value }))}
+                  />
+                </label>
+              </div>
+              <Button className="mt-2" variant="danger" disabled={!isEditing} onClick={generateCOEResigned}>
+                Generate & Log COE
+              </Button>
             </div>
+
+            <EmployeeCOERequestsList
+              requests={coeRequests.filter(
+                (r) => r.employeeName.trim().toLowerCase() === employee.name.trim().toLowerCase()
+              )}
+              onDateGiven={(req, value) =>
+                updateCoeRequest(req.id, { dateGiven: value ? new Date(value).toISOString() : undefined })
+              }
+              onRemove={(id) => removeCoeRequest(id)}
+            />
           </div>
         </Card>
         </div>
@@ -1066,6 +1147,62 @@ export default function EmployeeDetailPage({
           </div>
         </Card>
       </div>
+    </div>
+  );
+}
+
+function EmployeeCOERequestsList({
+  requests,
+  onDateGiven,
+  onRemove,
+}: {
+  requests: COERequest[];
+  onDateGiven: (req: COERequest, value: string) => void;
+  onRemove: (id: string) => void;
+}) {
+  if (requests.length === 0) {
+    return (
+      <p className="mt-3 text-xs text-ink-muted">No COE requests logged for this employee yet.</p>
+    );
+  }
+  const sorted = [...requests].sort((a, b) => (a.dateRequested < b.dateRequested ? 1 : -1));
+  return (
+    <div className="mt-3 overflow-x-auto rounded-lg border border-border">
+      <table className="w-full min-w-[600px] text-left text-sm">
+        <thead>
+          <tr className="bg-background text-xs uppercase tracking-wide text-ink-muted">
+            <th className="px-3 py-2">Type</th>
+            <th className="px-3 py-2">Purpose</th>
+            <th className="px-3 py-2">Date Requested</th>
+            <th className="px-3 py-2">Date COE Given</th>
+            <th className="px-3 py-2" />
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((req) => (
+            <tr key={req.id} className="border-t border-border">
+              <td className="px-3 py-2 text-ink">
+                {req.category === "endOfEmployment" ? "COE for Resigned" : "COE with Purpose"}
+              </td>
+              <td className="px-3 py-2 text-ink-muted">{req.purpose || "—"}</td>
+              <td className="px-3 py-2 text-ink-muted">{formatDate(req.dateRequested)}</td>
+              <td className="px-3 py-2">
+                <Input
+                  type="date"
+                  value={req.dateGiven ? req.dateGiven.slice(0, 10) : ""}
+                  onChange={(e) => onDateGiven(req, e.target.value)}
+                  className="min-w-[150px]"
+                />
+              </td>
+              <td className="px-3 py-2">
+                <button onClick={() => onRemove(req.id)} className="text-xs text-ink-muted hover:text-warn">
+                  Delete
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

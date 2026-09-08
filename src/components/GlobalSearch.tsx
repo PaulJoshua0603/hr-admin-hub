@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Employee, ReminderNote, Task } from "@/types";
-import { supabase, supabaseReady } from "@/lib/supabaseClient";
+import { useSupabaseStore } from "@/lib/useSupabaseStore";
 import { SearchIcon } from "@/components/icons";
 
 type Result = {
@@ -14,36 +14,29 @@ type Result = {
   kind: "Employee" | "Task" | "Note";
 };
 
-async function readValue<T>(key: string): Promise<T[]> {
-  if (!supabaseReady) {
-    try {
-      return JSON.parse(window.localStorage.getItem(key) || "[]");
-    } catch {
-      return [];
-    }
-  }
-  const { data } = await supabase
-    .from("app_store")
-    .select("value")
-    .eq("key", key)
-    .maybeSingle();
-  return (data?.value as T[]) || [];
-}
-
 export default function GlobalSearch() {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
-  const [employees, setEmployees] = useState<Employee[]>([]);
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [notes, setNotes] = useState<ReminderNote[]>([]);
+  const { items: employees, reload: reloadEmployees } = useSupabaseStore<Employee>(
+    "hr_employees",
+    []
+  );
+  const { items: tasks, reload: reloadTasks } = useSupabaseStore<Task>("hr_tasks", []);
+  const { items: notes, reload: reloadNotes } = useSupabaseStore<ReminderNote>(
+    "hr_reminders",
+    []
+  );
   const containerRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
-  useEffect(() => {
-    readValue<Employee>("hr_employees").then(setEmployees);
-    readValue<Task>("hr_tasks").then(setTasks);
-    readValue<ReminderNote>("hr_reminders").then(setNotes);
-  }, []);
+  // Re-pull the latest data whenever the search box gains focus, so results
+  // stay accurate even if employees/tasks/notes changed elsewhere in the app
+  // since this component first mounted.
+  function refreshData() {
+    reloadEmployees();
+    reloadTasks();
+    reloadNotes();
+  }
 
   useEffect(() => {
     function onClickOutside(e: MouseEvent) {
@@ -121,7 +114,10 @@ export default function GlobalSearch() {
           setQuery(e.target.value);
           setOpen(true);
         }}
-        onFocus={() => query && setOpen(true)}
+        onFocus={() => {
+          refreshData();
+          if (query) setOpen(true);
+        }}
         onKeyDown={(e) => {
           if (e.key === "Enter" && limited[0]) goTo(limited[0].href);
           if (e.key === "Escape") setOpen(false);

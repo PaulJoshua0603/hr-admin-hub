@@ -43,7 +43,7 @@ export async function exportRequirementsListDocx(employee: Employee) {
   const med = employee.medicalExamChecklist || emptyMedicalExamChecklist();
 
   const BODY_FONT = "Aptos";
-  const BODY_SIZE = 22; // 11pt — sized to fill the page comfortably
+  const BODY_SIZE = 20; // 10pt — tightened slightly to guarantee a single page with the larger top margin
   const ACCENT = "0E5E56";
 
   const checklistParagraph = (label: string, checked: boolean) =>
@@ -52,7 +52,7 @@ export async function exportRequirementsListDocx(employee: Employee) {
         new TextRun({ text: checked ? "☑ " : "☐ ", size: BODY_SIZE, font: BODY_FONT }),
         new TextRun({ text: label, size: BODY_SIZE, font: BODY_FONT }),
       ],
-      spacing: { after: 190, line: 300 },
+      spacing: { after: 150, line: 260 },
     });
 
   const fieldLine = (label: string, value: string, underline = false, before = 0) =>
@@ -61,7 +61,7 @@ export async function exportRequirementsListDocx(employee: Employee) {
         new TextRun({ text: `${label}: `, bold: true, size: BODY_SIZE, font: BODY_FONT }),
         new TextRun({ text: value || "________________________", size: BODY_SIZE, font: BODY_FONT }),
       ],
-      spacing: { before, after: underline ? 220 : 160 },
+      spacing: { before, after: underline ? 180 : 130 },
       border: underline
         ? {
             bottom: {
@@ -82,7 +82,7 @@ export async function exportRequirementsListDocx(employee: Employee) {
           : []),
         new TextRun({ text, bold: true, size: 24, font: BODY_FONT, color: "000000" }),
       ],
-      spacing: { before: 320, after: 200 },
+      spacing: { before: 260, after: 160 },
       border: {
         bottom: { style: BorderStyle.SINGLE, size: 6, space: 6, color: "CCCCCC" },
       },
@@ -138,16 +138,16 @@ export async function exportRequirementsListDocx(employee: Employee) {
     checklistParagraph("Complete Requirements", isComplete),
     checklistParagraph("Incomplete Requirements", !isComplete),
     fieldLine("Remarks", ""),
-    fieldLine("Realcognita email issued", employee.realcognitaEmail || "", false, 520),
-    fieldLine("Biometrics number", employee.biometricsNo || "", false, 400),
-    fieldLine("ID number", employee.companyIdNumber || "", false, 400),
+    fieldLine("Realcognita email issued", employee.realcognitaEmail || "", false, 380),
+    fieldLine("Biometrics number", employee.biometricsNo || "", false, 300),
+    fieldLine("ID number", employee.companyIdNumber || "", false, 300),
     new Paragraph({
       children: [new TextRun({ text: "Checked By: _______________________", size: BODY_SIZE, font: BODY_FONT })],
-      spacing: { before: 700, after: 320 },
+      spacing: { before: 500, after: 240 },
     }),
     new Paragraph({
       children: [new TextRun({ text: "Date Checked: _______________________", size: BODY_SIZE, font: BODY_FONT })],
-      spacing: { before: 300 },
+      spacing: { before: 220 },
     }),
   ];
 
@@ -168,7 +168,7 @@ export async function exportRequirementsListDocx(employee: Employee) {
         properties: {
           page: {
             size: { width: 11906, height: 16838 }, // A4 in twips
-            margin: { top: 560, right: 560, bottom: 560, left: 560 },
+            margin: { top: 1620, right: 560, bottom: 560, left: 560 },
           },
         },
         children: [
@@ -194,7 +194,7 @@ export async function exportRequirementsListDocx(employee: Employee) {
             rows: [
               new TableRow({
                 cantSplit: true,
-                height: { value: 13400, rule: HeightRule.ATLEAST },
+                height: { value: 12200, rule: HeightRule.ATLEAST },
                 children: [
                   new TableCell({
                     width: { size: 52, type: WidthType.PERCENTAGE },
@@ -261,6 +261,176 @@ function replaceSpan(xml: string, startAnchor: string, endAnchor: string, replac
   if (endIdx === -1) return xml;
   const endOfSpan = endIdx + endAnchor.length;
   return xml.slice(0, startIdx) + replacement + xml.slice(endOfSpan);
+}
+
+/** Build a single clean <w:r> run with the given text, matching the COE
+ * templates' base formatting (Arial 12pt), optionally bold/uppercase. */
+function buildRun(text: string, opts: { bold?: boolean; upper?: boolean } = {}): string {
+  const t = opts.upper ? text.toUpperCase() : text;
+  const boldTag = opts.bold ? "<w:b/><w:bCs/>" : "";
+  return `<w:r><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:cs="Arial"/>${boldTag}<w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr><w:t xml:space="preserve">${escapeXml(
+    t
+  )}</w:t></w:r>`;
+}
+
+/** Find every run of one-or-more consecutive yellow-highlighted <w:r> runs
+ * (i.e. each "highlighted field" in a Word template) and replace each block,
+ * in document order, with the corresponding pre-built run XML. */
+function replaceHighlightedBlocksSequential(xml: string, replacements: string[]): string {
+  const pattern =
+    /(?:<w:r(?: [^>]*)?><w:rPr>(?:(?!<\/w:rPr>)[\s\S])*?<w:highlight w:val="yellow"\/>(?:(?!<\/w:rPr>)[\s\S])*?<\/w:rPr>(?:(?!<\/w:r>)[\s\S])*?<\/w:r>)+/g;
+  let i = 0;
+  return xml.replace(pattern, (match) => {
+    const val = i < replacements.length ? replacements[i] : undefined;
+    i++;
+    return val === undefined ? match : val;
+  });
+}
+
+/** "9th of September 2026" style ordinal date. */
+function ordinalDateLong(date: Date): string {
+  const day = date.getDate();
+  const suffix =
+    day % 10 === 1 && day !== 11
+      ? "st"
+      : day % 10 === 2 && day !== 12
+      ? "nd"
+      : day % 10 === 3 && day !== 13
+      ? "rd"
+      : "th";
+  const month = date.toLocaleString("en-US", { month: "long" });
+  return `${day}${suffix} of ${month} ${date.getFullYear()}`;
+}
+
+function salutationFor(gender?: string): string {
+  return gender === "Male" ? "Mr." : gender === "Female" ? "Ms." : "Mr./Ms.";
+}
+
+function pronounFor(gender?: string): string {
+  return gender === "Male" ? "He" : gender === "Female" ? "She" : "He/She";
+}
+
+function possessivePronounFor(gender?: string): string {
+  return gender === "Male" ? "His" : gender === "Female" ? "Her" : "His/Her";
+}
+
+async function uploadCOEFile(blob: Blob, employeeId: string | undefined, filename: string) {
+  if (!supabaseReady || !employeeId) return null;
+  const path = `coe-files/${employeeId}/${Date.now()}-${filename}`;
+  const { error } = await supabase.storage.from("files").upload(path, blob, { upsert: true });
+  return error ? null : path;
+}
+
+export async function exportCOEWithPurposeDocx(
+  employeeName: string,
+  purpose: string,
+  employee?: Employee
+) {
+  const blob = await fetch("/templates/coe-with-purpose.docx").then((r) => r.blob());
+  const JSZip = (await import("jszip")).default;
+  const zip = await JSZip.loadAsync(blob);
+  const docPath = "word/document.xml";
+  const file = zip.file(docPath);
+  if (!file) {
+    saveBlob(blob, `COE for ${purpose} - ${employeeName}.docx`);
+    return;
+  }
+  let xml = await file.async("text");
+
+  const salutation = salutationFor(employee?.gender);
+  const pronoun = pronounFor(employee?.gender);
+  const hiredDate = employee?.dateHired ? formatDate(employee.dateHired, "dd MMMM yyyy") : "";
+  const compensation = employee?.totalMonthlyGrossCompensation || "0.00";
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const dateIssued = ordinalDateLong(tomorrow);
+
+  xml = replaceHighlightedBlocksSequential(xml, [
+    buildRun(purpose, { bold: true, upper: true }),
+    buildRun(`${salutation} ${employeeName}`),
+    buildRun(employee?.position || ""),
+    buildRun(pronoun),
+    buildRun(hiredDate),
+    buildRun(compensation),
+    buildRun(dateIssued),
+  ]);
+
+  // The template hardcodes "His latest compensation…" regardless of gender —
+  // replace that literal "H"+"is" run pair with the correct possessive pronoun.
+  xml = replaceSpan(
+    xml,
+    "<w:t>H</w:t></w:r>",
+    '<w:t>is</w:t></w:r><w:r w:rsidR="00245C53"',
+    `</w:r>${buildRun(possessivePronounFor(employee?.gender))}<w:r w:rsidR="00245C53"`
+  );
+
+  zip.file(docPath, xml);
+  const outBlob = await zip.generateAsync({
+    type: "blob",
+    mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  });
+  const filename = `COE for ${purpose} - ${employeeName}.docx`;
+  await uploadCOEFile(outBlob, employee?.id, filename);
+  saveBlob(outBlob, filename);
+}
+
+export async function exportCOEResignedDocx(employeeName: string, employee?: Employee) {
+  const blob = await fetch("/templates/coe-resigned.docx").then((r) => r.blob());
+  const JSZip = (await import("jszip")).default;
+  const zip = await JSZip.loadAsync(blob);
+  const docPath = "word/document.xml";
+  const file = zip.file(docPath);
+  if (!file) {
+    saveBlob(blob, `COE_Resigned_${employeeName}.docx`);
+    return;
+  }
+  let xml = await file.async("text");
+
+  const salutation = salutationFor(employee?.gender);
+  const hiredDate = employee?.dateHired ? formatDate(employee.dateHired, "MMMM dd, yyyy") : "";
+  const lastDate = employee?.lastDay ? formatDate(employee.lastDay, "MMMM dd, yyyy") : "";
+  const duration = [hiredDate, lastDate].filter(Boolean).join(" to ");
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const dateIssued = ordinalDateLong(tomorrow);
+
+  xml = replaceHighlightedBlocksSequential(xml, [
+    buildRun(`${salutation} ${employeeName}`),
+    buildRun(employee?.position || ""),
+    buildRun(duration),
+    buildRun(dateIssued),
+  ]);
+
+  zip.file(docPath, xml);
+  const outBlob = await zip.generateAsync({
+    type: "blob",
+    mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  });
+  const filename = `COE_Resigned_${employeeName}.docx`;
+  await uploadCOEFile(outBlob, employee?.id, filename);
+  saveBlob(outBlob, filename);
+}
+
+export async function listEmployeeCOEFiles(employeeId: string) {
+  if (!supabaseReady) return [];
+  const { data, error } = await supabase.storage.from("files").list(`coe-files/${employeeId}`, {
+    limit: 100,
+    sortBy: { column: "name", order: "desc" },
+  });
+  if (error || !data) return [];
+  return data.filter((f) => f.name !== ".keep");
+}
+
+export async function downloadEmployeeCOEFile(employeeId: string, name: string) {
+  if (!supabaseReady) return;
+  const path = `coe-files/${employeeId}/${name}`;
+  const { data } = await supabase.storage.from("files").createSignedUrl(path, 60);
+  if (data?.signedUrl) window.open(data.signedUrl, "_blank");
+}
+
+export async function deleteEmployeeCOEFile(employeeId: string, name: string) {
+  if (!supabaseReady) return;
+  await supabase.storage.from("files").remove([`coe-files/${employeeId}/${name}`]);
 }
 
 /** Parse a "6:30am – 3:00pm" style shift string into ["6:30 a.m.", "3:00 p.m."]. */

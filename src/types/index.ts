@@ -301,21 +301,28 @@ export type OnboardingChecklistCategory = {
 };
 
 export const DEFAULT_NOTES_TASK_LIST_ITEMS: string[] = [
-  "Print the List of Requirements",
+  "Print Employee 201 Checklist",
+  "Print List of Requirements",
+  "Print Employment Contract",
+  "Print Job Offer",
   "Print BDO Reference Sheet",
   "Print BDO Endorsement Letter",
-  "Print Job Offer",
-  "Process HMO enrollment",
-  "Complete ER2 Form for PhilHealth",
-  "Prepare supplies for new hire (Black & Red Ballpens, Notebook, Correction Tape, ID Lace)",
-  "Prepare PowerPoint presentation for Onboarding",
+  "Attach BDO signing notes (Name, Position, Department, New/Replacement)",
+  "Prepare desk supplies (Black & Red Ballpens, Notebook, Correction Tape, Bottled Water)",
   "Issue Visitor Pass",
-  "Collect 2x2 Pic, 1x1 Pic, NBI Clearance, Medical Exam results, Payroll Number, ID No., and Biometrics No.",
-  "Remind employee to file Certificate of Attendance in Sprout (for \"Time In\" only)",
-  "Create Excel schedule/tracker for employee's onboarding week",
-  "Send onboarding email with Handbook, Employee Acknowledgement Form, Office Facilities Guide, and Safety Handbook",
+  "Collect 2x2 and 1x1 pictures",
+  "Collect NBI Clearance",
+  "Collect Medical Exam results",
+  "Collect medical receipt",
+  "Email Payroll regarding the Medical Receipt",
+  "Email the 2316 Waiver form",
+  "Email the HMO PhilCare number",
+  "Send onboarding email (Handbook, Acknowledgement Form, Office Facilities Guide, Safety Handbook)",
   "Add employee profile in Sprout",
-  "Upload/store files in the Shared Folder",
+  "Get ID No. and Biometrics",
+  "Process ER2 PhilHealth Form",
+  "Upload files to the Shared Folder",
+  "Remind employee to file Certificate of Attendance in Sprout (for \"Time In\" only)",
 ];
 
 export function defaultOnboardingChecklist(): OnboardingChecklistCategory[] {
@@ -371,6 +378,7 @@ export type Employee = {
   realcognitaEmail?: string;
   homeAddress?: string;
   homeCity?: string; // city/municipality, filled separately for docx templates like "City, Philippines"
+  gender?: string;
   workingHours?: string;
 };
 

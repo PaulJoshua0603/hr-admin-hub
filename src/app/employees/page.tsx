@@ -13,8 +13,6 @@ import {
   getMissingCriticalItems,
   defaultOnboardingChecklist,
   type Employee,
-  type COERequest,
-  type COECategory,
 } from "@/types";
 import { useNotifications } from "@/lib/notificationContext";
 
@@ -40,6 +38,7 @@ export default function EmployeesPage() {
   const { notify } = useNotifications();
   const [showForm, setShowForm] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
   const [showDuplicates, setShowDuplicates] = useState(false);
   const [name, setName] = useState("");
   const [position, setPosition] = useState("");
@@ -51,9 +50,6 @@ export default function EmployeesPage() {
   const [editName, setEditName] = useState("");
   const [editPosition, setEditPosition] = useState("");
   const [editDepartment, setEditDepartment] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("active");
-  const [profileFilter, setProfileFilter] = useState<"all" | "complete" | "incomplete">("all");
-  const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest");
 
   function startEdit(e: Employee) {
     setEditingId(e.id);
@@ -159,7 +155,7 @@ export default function EmployeesPage() {
 
       const imported: Employee[] = [];
       for (const row of rows) {
-        const fullNameCol = String(row["Full Name"] || "").trim();
+        const fullNameCol = String(row["Full Name"] || row["Employee Name"] || "").trim();
         let name = fullNameCol;
         if (!name) {
           const first = String(row["First Name"] || "").trim();
@@ -170,7 +166,7 @@ export default function EmployeesPage() {
         if (!name || /^admin\b/i.test(name)) continue;
 
         const statusRaw = String(row["Employee Status"] || "").trim();
-        const resigned = /resign/i.test(statusRaw);
+        const resigned = /resign|terminat/i.test(statusRaw);
         const rawAddress = String(row["Address"] || "")
           .replace(/^\s*Address\s*1:\s*/i, "")
           .replace(/\s*Philippines\.?\s*$/i, "")
@@ -178,6 +174,7 @@ export default function EmployeesPage() {
           .trim();
         const dateAdded = todayISO();
         const gross = formatGrossAmount(row["Monthly Gross"]);
+        const basicSalary = formatGrossAmount(row["Base Salary"]);
         const lastDay = parseExcelDate(row["Separation Date"]);
 
         imported.push({
@@ -185,6 +182,7 @@ export default function EmployeesPage() {
           name,
           position: String(row["Position"] || "").trim() || undefined,
           department: String(row["Department"] || "").trim() || undefined,
+          gender: String(row["Gender"] || "").trim() || undefined,
           birthday: parseExcelDate(row["Birthday"]),
           dateAdded,
           requirementsDeadline: addDaysISO(dateAdded, 14),
@@ -197,9 +195,11 @@ export default function EmployeesPage() {
           dateHired: parseExcelDate(row["Hire Date"]),
           lastDay,
           homeAddress: rawAddress || undefined,
+          homeCity: String(row["City"] || "").trim() || undefined,
           companyIdNumber: String(row["Employee ID"] || "").trim() || undefined,
           biometricsNo: String(row["Biometric ID"] || "").trim() || undefined,
           philhealthNo: String(row["PhilHealth"] || "").trim() || undefined,
+          basicSalary: basicSalary,
           totalMonthlyGrossCompensation: gross,
           realcognitaEmail: String(row["Email"] || "").trim() || undefined,
         });
@@ -245,6 +245,12 @@ export default function EmployeesPage() {
     notify(`Kept "${keep.name}" (newest), removed ${rest.length} duplicate(s)`, "deleted");
   }
 
+  function deleteAllEmployees() {
+    setItems([]);
+    notify(`Deleted all ${employees.length} employee(s)`, "deleted");
+    setConfirmDeleteAll(false);
+  }
+
   function statusOf(e: Employee) {
     const complete = Object.values(e.requirements).every(
       (s) => s === "complete"
@@ -259,9 +265,9 @@ export default function EmployeesPage() {
     <div>
       <SectionHeading
         title="Employees"
-        subtitle="Onboarding requirements, milestones, and regularization tracking."
+        subtitle={`${employees.length} employee${employees.length === 1 ? "" : "s"} on file. Onboarding requirements, milestones, and regularization tracking.`}
         action={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {duplicateCount > 0 && (
               <Button variant="ghost" onClick={() => setShowDuplicates((s) => !s)}>
                 ⚠ {duplicateCount} duplicate{duplicateCount === 1 ? "" : "s"}
@@ -288,6 +294,21 @@ export default function EmployeesPage() {
               />
             </label>
             <Button onClick={() => setShowForm((s) => !s)}>+ Add employee</Button>
+            {employees.length > 0 &&
+              (confirmDeleteAll ? (
+                <div className="flex items-center gap-1.5">
+                  <Button variant="danger" onClick={deleteAllEmployees}>
+                    Confirm delete all ({employees.length})
+                  </Button>
+                  <Button variant="ghost" onClick={() => setConfirmDeleteAll(false)}>
+                    Cancel
+                  </Button>
+                </div>
+              ) : (
+                <Button variant="danger" onClick={() => setConfirmDeleteAll(true)}>
+                  Delete all employees
+                </Button>
+              ))}
           </div>
         }
       />
@@ -390,98 +411,14 @@ export default function EmployeesPage() {
         </Card>
       )}
 
-      <div className="mb-4 flex flex-wrap items-center gap-4">
-        <div className="flex gap-1 rounded-lg bg-background p-1 w-fit">
-          {(["active", "inactive", "all"] as const).map((s) => {
-            const count =
-              s === "active"
-                ? employees.filter(isActive).length
-                : s === "inactive"
-                ? employees.filter((e) => !isActive(e)).length
-                : employees.length;
-            return (
-              <button
-                key={s}
-                onClick={() => setStatusFilter(s)}
-                className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium capitalize transition-colors ${
-                  statusFilter === s ? "bg-surface text-accent shadow-sm" : "text-ink-muted hover:text-ink"
-                }`}
-              >
-                {s}
-                <span
-                  className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
-                    statusFilter === s ? "bg-accent-soft text-accent" : "bg-surface text-ink-muted"
-                  }`}
-                >
-                  {count}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-        <div className="flex gap-1 rounded-lg bg-background p-1 w-fit">
-          {(["all", "complete", "incomplete"] as const).map((p) => {
-            const count =
-              p === "all"
-                ? employees.length
-                : p === "complete"
-                ? employees.filter(isProfileComplete).length
-                : employees.filter((e) => !isProfileComplete(e)).length;
-            return (
-              <button
-                key={p}
-                onClick={() => setProfileFilter(p)}
-                className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium capitalize transition-colors ${
-                  profileFilter === p ? "bg-surface text-accent shadow-sm" : "text-ink-muted hover:text-ink"
-                }`}
-              >
-                {p === "all" ? "All profiles" : `${p} profiles`}
-                <span
-                  className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
-                    profileFilter === p ? "bg-accent-soft text-accent" : "bg-surface text-ink-muted"
-                  }`}
-                >
-                  {count}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="flex gap-1 rounded-lg bg-background p-1 w-fit">
-          {(["newest", "oldest"] as const).map((s) => (
-            <button
-              key={s}
-              onClick={() => setSortOrder(s)}
-              className={`rounded-md px-3 py-1.5 text-xs font-medium capitalize transition-colors ${
-                sortOrder === s ? "bg-surface text-accent shadow-sm" : "text-ink-muted hover:text-ink"
-              }`}
-            >
-              {s === "newest" ? "Newest first" : "Oldest first"}
-            </button>
-          ))}
-        </div>
-      </div>
-
       <div className="flex flex-col gap-2">
         {employees.length === 0 && (
           <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-ink-muted">
             No employees added yet.
           </div>
         )}
-        {employees
-          .filter((e) => {
-            if (statusFilter === "active" && !isActive(e)) return false;
-            if (statusFilter === "inactive" && isActive(e)) return false;
-            const complete = isProfileComplete(e);
-            if (profileFilter === "complete" && !complete) return false;
-            if (profileFilter === "incomplete" && complete) return false;
-            return true;
-          })
-          .sort((a, b) => {
-            const diff = a.dateAdded < b.dateAdded ? -1 : a.dateAdded > b.dateAdded ? 1 : 0;
-            return sortOrder === "oldest" ? diff : -diff;
-          })
+        {[...employees]
+          .sort((a, b) => (a.dateAdded < b.dateAdded ? 1 : a.dateAdded > b.dateAdded ? -1 : 0))
           .map((e) => {
           const status = statusOf(e);
           const missingCritical = getMissingCriticalItems(e);
@@ -550,74 +487,190 @@ export default function EmployeesPage() {
         })}
       </div>
 
-      <COETrackingSection />
+      <AdvancedFilterView employees={employees} />
     </div>
   );
 }
 
-/* ------------------------------ COE Tracking ------------------------------ */
+/* ------------------------- Advanced Filtering & Views ------------------------- */
 
-function COETrackingSection() {
-  const { items: requests, hydrated, add, update, remove } = useSupabaseStore<COERequest>(
-    "hr_coe_requests",
-    []
-  );
-  const { notify } = useNotifications();
+type FilterCategory = "milestones" | "resigned" | "newHires";
+type MilestoneType = "birthday" | "third" | "sixth" | "oneYear";
+
+type FilterRow = {
+  id: string;
+  name: string;
+  position: string;
+  department: string;
+  email: string;
+  date: string; // ISO
+};
+
+function inRange(iso: string, start: string, end: string): boolean {
+  const d = iso.slice(0, 10);
+  return d >= start && d <= end;
+}
+
+function startOfWeekISO(base: Date): string {
+  const day = base.getDay();
+  const diff = (day === 0 ? -6 : 1) - day; // Monday start
+  const monday = new Date(base);
+  monday.setDate(base.getDate() + diff);
+  return monday.toISOString().slice(0, 10);
+}
+function endOfWeekISO(base: Date): string {
+  const start = startOfWeekISO(base);
+  const d = new Date(start);
+  d.setDate(d.getDate() + 4); // Monday + 4 = Friday
+  return d.toISOString().slice(0, 10);
+}
+function startOfMonthISO(base: Date): string {
+  return new Date(base.getFullYear(), base.getMonth(), 1).toISOString().slice(0, 10);
+}
+function endOfMonthISO(base: Date): string {
+  return new Date(base.getFullYear(), base.getMonth() + 1, 0).toISOString().slice(0, 10);
+}
+
+function AdvancedFilterView({ employees }: { employees: Employee[] }) {
   const [expanded, setExpanded] = useState(false);
-  const [showForm, setShowForm] = useState(false);
-  const [expandedCategory, setExpandedCategory] = useState<COECategory | null>(null);
-  const [form, setForm] = useState<{
-    category: COECategory;
-    employeeName: string;
-    position: string;
-    department: string;
-    purpose: string;
-    dateRequested: string;
-  }>({
-    category: "withPurpose",
-    employeeName: "",
-    position: "",
-    department: "",
-    purpose: "",
-    dateRequested: todayISO().slice(0, 10),
-  });
+  const [category, setCategory] = useState<FilterCategory>("milestones");
+  const [milestoneType, setMilestoneType] = useState<MilestoneType>("birthday");
+  const today = new Date();
+  const [startDate, setStartDate] = useState(startOfMonthISO(today));
+  const [endDate, setEndDate] = useState(endOfMonthISO(today));
+  const [exporting, setExporting] = useState(false);
+  const { notify } = useNotifications();
 
-  function addRequest() {
-    if (!form.employeeName.trim()) return;
-    add({
-      id: uuid(),
-      category: form.category,
-      employeeName: form.employeeName.trim(),
-      position: form.position.trim(),
-      department: form.department.trim(),
-      purpose: form.purpose.trim(),
-      dateRequested: new Date(form.dateRequested).toISOString(),
-    });
-    notify(`COE request logged for "${form.employeeName.trim()}"`, "created");
-    setForm({
-      category: "withPurpose",
-      employeeName: "",
-      position: "",
-      department: "",
-      purpose: "",
-      dateRequested: todayISO().slice(0, 10),
-    });
-    setShowForm(false);
+  function applyPreset(preset: "week" | "month") {
+    if (preset === "week") {
+      setStartDate(startOfWeekISO(today));
+      setEndDate(endOfWeekISO(today));
+    } else {
+      setStartDate(startOfMonthISO(today));
+      setEndDate(endOfMonthISO(today));
+    }
   }
 
-  function setDateGiven(req: COERequest, value: string) {
-    update(req.id, { dateGiven: value ? new Date(value).toISOString() : undefined });
-    if (value) notify(`COE marked given for "${req.employeeName}"`, "updated");
+  const rows: FilterRow[] = (() => {
+    if (category === "resigned") {
+      return employees
+        .filter((e) => e.lastDay && inRange(e.lastDay, startDate, endDate))
+        .map((e) => ({
+          id: e.id,
+          name: e.name,
+          position: e.position || "",
+          department: e.department || "",
+          email: e.realcognitaEmail || "",
+          date: e.lastDay!,
+        }));
+    }
+    if (category === "newHires") {
+      return employees
+        .filter((e) => e.dateHired && inRange(e.dateHired, startDate, endDate))
+        .map((e) => ({
+          id: e.id,
+          name: e.name,
+          position: e.position || "",
+          department: e.department || "",
+          email: e.realcognitaEmail || "",
+          date: e.dateHired!,
+        }));
+    }
+    // milestones
+    if (milestoneType === "birthday") {
+      return employees
+        .filter((e) => {
+          if (!e.birthday) return false;
+          const b = new Date(e.birthday);
+          const thisYear = new Date(today.getFullYear(), b.getMonth(), b.getDate())
+            .toISOString()
+            .slice(0, 10);
+          return inRange(thisYear, startDate, endDate);
+        })
+        .map((e) => {
+          const b = new Date(e.birthday!);
+          const thisYear = new Date(today.getFullYear(), b.getMonth(), b.getDate()).toISOString();
+          return {
+            id: e.id,
+            name: e.name,
+            position: e.position || "",
+            department: e.department || "",
+            email: e.realcognitaEmail || "",
+            date: thisYear,
+          };
+        });
+    }
+    const monthsMap: Record<MilestoneType, number> = { birthday: 0, third: 3, sixth: 6, oneYear: 12 };
+    const months = monthsMap[milestoneType];
+    return employees
+      .filter((e) => e.dateHired && !e.lastDay)
+      .map((e) => {
+        const d = new Date(e.dateHired!);
+        d.setMonth(d.getMonth() + months);
+        return {
+          id: e.id,
+          name: e.name,
+          position: e.position || "",
+          department: e.department || "",
+          email: e.realcognitaEmail || "",
+          date: d.toISOString(),
+        };
+      })
+      .filter((r) => inRange(r.date, startDate, endDate));
+  })().sort((a, b) => (a.date < b.date ? -1 : 1));
+
+  const dateColumnLabel =
+    category === "resigned"
+      ? "Separation Date"
+      : category === "newHires"
+      ? "Hired Date"
+      : milestoneType === "birthday"
+      ? "Birthday"
+      : "Milestone Date";
+
+  async function handleExport() {
+    setExporting(true);
+    try {
+      const ExcelJS = (await import("exceljs")).default;
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet("Filtered View");
+      ws.columns = [
+        { width: 26 },
+        { width: 24 },
+        { width: 20 },
+        { width: 28 },
+        { width: 18 },
+      ];
+      const headerRow = ws.addRow(["Employee Name", "Position", "Department", "Email", dateColumnLabel]);
+      headerRow.eachCell((cell) => {
+        cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0E5E56" } };
+      });
+      rows.forEach((r) => {
+        ws.addRow([r.name, r.position, r.department, r.email, formatDate(r.date, "MMMM d, yyyy")]);
+      });
+      ws.addRow([]);
+      const totalRow = ws.addRow([`Total: ${rows.length}`]);
+      totalRow.getCell(1).font = { bold: true };
+
+      const buffer = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buffer], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const catLabel = category === "milestones" ? milestoneType : category;
+      a.download = `${catLabel}_${startDate}_to_${endDate}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      notify(`Exported ${rows.length} record(s) to Excel`, "created");
+    } finally {
+      setExporting(false);
+    }
   }
-
-  if (!hydrated) return null;
-
-  const withPurpose = [...requests]
-    .filter((r) => (r.category || "withPurpose") === "withPurpose")
-    .sort((a, b) => (a.dateRequested < b.dateRequested ? 1 : -1));
-  const endOfEmployment = [...requests]
-    .filter((r) => r.category === "endOfEmployment")
-    .sort((a, b) => (a.dateRequested < b.dateRequested ? 1 : -1));
 
   return (
     <div className="mt-10">
@@ -626,200 +679,115 @@ function COETrackingSection() {
         className="flex w-full items-center justify-between gap-3 text-left"
       >
         <div>
-          <h2 className="font-display text-2xl text-ink">Certificate of Employment (COE) Tracking</h2>
+          <h2 className="font-display text-2xl text-ink">Advanced Filtering & Custom Views</h2>
           <p className="mt-1 text-sm text-ink-muted">
-            {requests.length} request{requests.length === 1 ? "" : "s"} logged. Click to{" "}
-            {expanded ? "hide" : "view"} details.
+            Filter by Milestones, Resigned Employees, or New Hires within a date range.
           </p>
         </div>
         <span className={`text-ink-muted transition-transform ${expanded ? "rotate-90" : ""}`}>›</span>
       </button>
 
       {expanded && (
-        <div className="mt-4">
-          <div className="mb-4 flex justify-end">
-            <Button onClick={() => setShowForm((s) => !s)}>+ Log COE request</Button>
-          </div>
+        <Card className="mt-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex gap-1 rounded-lg bg-background p-1 w-fit">
+              {([
+                { id: "milestones" as const, label: "Milestones" },
+                { id: "resigned" as const, label: "Resigned Employees" },
+                { id: "newHires" as const, label: "New Hires" },
+              ]).map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => setCategory(c.id)}
+                  className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                    category === c.id ? "bg-surface text-accent shadow-sm" : "text-ink-muted hover:text-ink"
+                  }`}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
 
-          {showForm && (
-            <Card className="mb-4">
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                <label className="flex flex-col gap-1 text-xs text-ink-muted sm:col-span-2 lg:col-span-3">
-                  Category
-                  <select
-                    value={form.category}
-                    onChange={(e) =>
-                      setForm((f) => ({ ...f, category: e.target.value as COECategory }))
-                    }
-                    className="rounded-md border border-border bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-accent"
+            {category === "milestones" && (
+              <div className="flex gap-1 rounded-lg bg-background p-1 w-fit">
+                {([
+                  { id: "birthday" as const, label: "Birthdays" },
+                  { id: "third" as const, label: "3rd Month" },
+                  { id: "sixth" as const, label: "6th Month" },
+                  { id: "oneYear" as const, label: "1 Year" },
+                ]).map((m) => (
+                  <button
+                    key={m.id}
+                    onClick={() => setMilestoneType(m.id)}
+                    className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                      milestoneType === m.id ? "bg-surface text-accent shadow-sm" : "text-ink-muted hover:text-ink"
+                    }`}
                   >
-                    <option value="withPurpose">
-                      COE with Purpose — still actively employed
-                    </option>
-                    <option value="endOfEmployment">
-                      COE for Employees Who End Their Employment
-                    </option>
-                  </select>
-                </label>
-                <Input
-                  placeholder="Employee name"
-                  value={form.employeeName}
-                  onChange={(e) => setForm((f) => ({ ...f, employeeName: e.target.value }))}
-                  autoFocus
-                />
-                <Input
-                  placeholder="Position"
-                  value={form.position}
-                  onChange={(e) => setForm((f) => ({ ...f, position: e.target.value }))}
-                />
-                <Input
-                  placeholder="Department"
-                  value={form.department}
-                  onChange={(e) => setForm((f) => ({ ...f, department: e.target.value }))}
-                />
-                <Input
-                  placeholder="Purpose (e.g. Bank loan, Visa application)"
-                  value={form.purpose}
-                  onChange={(e) => setForm((f) => ({ ...f, purpose: e.target.value }))}
-                  className="sm:col-span-2 lg:col-span-2"
-                />
-                <label className="flex flex-col gap-1 text-xs text-ink-muted">
-                  Date requested
-                  <Input
-                    type="date"
-                    value={form.dateRequested}
-                    onChange={(e) => setForm((f) => ({ ...f, dateRequested: e.target.value }))}
-                  />
-                </label>
+                    {m.label}
+                  </button>
+                ))}
               </div>
-              <div className="mt-3 flex gap-2">
-                <Button onClick={addRequest}>Save</Button>
-                <Button variant="ghost" onClick={() => setShowForm(false)}>
-                  Cancel
-                </Button>
-              </div>
-            </Card>
-          )}
-
-          <COECategoryPanel
-            title="COE with Purpose"
-            subtitle="Issued to employees still actively working in the company."
-            requests={withPurpose}
-            open={expandedCategory === "withPurpose"}
-            onToggle={() =>
-              setExpandedCategory((c) => (c === "withPurpose" ? null : "withPurpose"))
-            }
-            onDateGiven={setDateGiven}
-            onRemove={(id, name) => {
-              remove(id);
-              notify(`COE request removed for "${name}"`, "deleted");
-            }}
-          />
-
-          <div className="mt-4">
-            <COECategoryPanel
-              title="COE for Employees Who End Their Employment"
-              subtitle="Issued to employees who have already completed or ended their employment."
-              requests={endOfEmployment}
-              open={expandedCategory === "endOfEmployment"}
-              onToggle={() =>
-                setExpandedCategory((c) => (c === "endOfEmployment" ? null : "endOfEmployment"))
-              }
-              onDateGiven={setDateGiven}
-              onRemove={(id, name) => {
-                remove(id);
-                notify(`COE request removed for "${name}"`, "deleted");
-              }}
-            />
+            )}
           </div>
-        </div>
-      )}
-    </div>
-  );
-}
 
-function COECategoryPanel({
-  title,
-  subtitle,
-  requests,
-  open,
-  onToggle,
-  onDateGiven,
-  onRemove,
-}: {
-  title: string;
-  subtitle: string;
-  requests: COERequest[];
-  open: boolean;
-  onToggle: () => void;
-  onDateGiven: (req: COERequest, value: string) => void;
-  onRemove: (id: string, name: string) => void;
-}) {
-  return (
-    <Card>
-      <button onClick={onToggle} className="flex w-full items-center justify-between gap-3 text-left">
-        <div>
-          <h3 className="text-sm font-semibold text-ink">{title}</h3>
-          <p className="text-xs text-ink-muted">{subtitle}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Pill tone="accent">{requests.length}</Pill>
-          <span className={`text-ink-muted transition-transform ${open ? "rotate-90" : ""}`}>›</span>
-        </div>
-      </button>
+          <div className="mt-3 flex flex-wrap items-end gap-3">
+            <label className="flex flex-col gap-1 text-xs text-ink-muted">
+              Start date
+              <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-ink-muted">
+              End date
+              <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+            </label>
+            <Button variant="ghost" onClick={() => applyPreset("week")}>
+              This Week
+            </Button>
+            <Button variant="ghost" onClick={() => applyPreset("month")}>
+              This Month
+            </Button>
+            <Button onClick={handleExport} disabled={exporting || rows.length === 0} className="ml-auto">
+              {exporting ? "Exporting…" : "Export to Excel"}
+            </Button>
+          </div>
 
-      {open && (
-        <div className="mt-4">
-          {requests.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-ink-muted">
-              No COE requests logged yet.
+          <p className="mt-4 text-sm font-medium text-ink">Total: {rows.length}</p>
+
+          {rows.length === 0 ? (
+            <div className="mt-2 rounded-lg border border-dashed border-border p-6 text-center text-sm text-ink-muted">
+              No matching records for this filter and date range.
             </div>
           ) : (
-            <div className="overflow-x-auto rounded-lg border border-border">
+            <div className="mt-2 overflow-x-auto rounded-lg border border-border">
               <table className="w-full min-w-[720px] text-left text-sm">
                 <thead>
                   <tr className="bg-background text-xs uppercase tracking-wide text-ink-muted">
                     <th className="px-3 py-2">Employee Name</th>
                     <th className="px-3 py-2">Position</th>
                     <th className="px-3 py-2">Department</th>
-                    <th className="px-3 py-2">Purpose</th>
-                    <th className="px-3 py-2">Date Requested</th>
-                    <th className="px-3 py-2">Date COE Given</th>
-                    <th className="px-3 py-2" />
+                    <th className="px-3 py-2">Email</th>
+                    <th className="px-3 py-2">{dateColumnLabel}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {requests.map((req) => (
-                    <tr key={req.id} className="border-t border-border">
-                      <td className="px-3 py-2 text-ink">{req.employeeName}</td>
-                      <td className="px-3 py-2 text-ink-muted">{req.position || "—"}</td>
-                      <td className="px-3 py-2 text-ink-muted">{req.department || "—"}</td>
-                      <td className="px-3 py-2 text-ink-muted">{req.purpose || "—"}</td>
-                      <td className="px-3 py-2 text-ink-muted">{formatDate(req.dateRequested)}</td>
-                      <td className="px-3 py-2">
-                        <Input
-                          type="date"
-                          value={req.dateGiven ? req.dateGiven.slice(0, 10) : ""}
-                          onChange={(e) => onDateGiven(req, e.target.value)}
-                          className="min-w-[150px]"
-                        />
+                  {rows.map((r) => (
+                    <tr key={r.id} className="border-t border-border">
+                      <td className="px-3 py-2 text-ink">
+                        <Link href={`/employees/${r.id}`} className="hover:text-accent">
+                          {r.name}
+                        </Link>
                       </td>
-                      <td className="px-3 py-2">
-                        <button
-                          onClick={() => onRemove(req.id, req.employeeName)}
-                          className="text-xs text-ink-muted hover:text-warn"
-                        >
-                          Delete
-                        </button>
-                      </td>
+                      <td className="px-3 py-2 text-ink-muted">{r.position || "—"}</td>
+                      <td className="px-3 py-2 text-ink-muted">{r.department || "—"}</td>
+                      <td className="px-3 py-2 text-ink-muted">{r.email || "—"}</td>
+                      <td className="px-3 py-2 text-ink-muted">{formatDate(r.date, "MMMM d, yyyy")}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
           )}
-        </div>
+        </Card>
       )}
-    </Card>
+    </div>
   );
 }
