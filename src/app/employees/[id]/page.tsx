@@ -930,12 +930,19 @@ export default function EmployeeDetailPage({
                   onChange={(e) => setPurposeForm((f) => ({ ...f, purpose: e.target.value }))}
                   className="sm:col-span-2"
                 />
-                <Input
-                  type="date"
-                  value={purposeForm.dateRequested}
-                  disabled={!isEditing}
-                  onChange={(e) => setPurposeForm((f) => ({ ...f, dateRequested: e.target.value }))}
-                />
+                <div className="flex flex-col gap-1">
+                  <Input
+                    type="date"
+                    value={purposeForm.dateRequested}
+                    disabled={!isEditing}
+                    onChange={(e) => setPurposeForm((f) => ({ ...f, dateRequested: e.target.value }))}
+                  />
+                  {purposeForm.dateRequested && (
+                    <span className="text-[11px] text-ink-muted">
+                      {formatDate(new Date(purposeForm.dateRequested).toISOString(), "MMMM d, yyyy")}
+                    </span>
+                  )}
+                </div>
               </div>
               <Button
                 className="mt-2"
@@ -960,6 +967,11 @@ export default function EmployeeDetailPage({
                     disabled={!isEditing}
                     onChange={(e) => setResignedForm((f) => ({ ...f, dateRequested: e.target.value }))}
                   />
+                  {resignedForm.dateRequested && (
+                    <span className="text-[11px] text-ink-muted">
+                      {formatDate(new Date(resignedForm.dateRequested).toISOString(), "MMMM d, yyyy")}
+                    </span>
+                  )}
                 </label>
                 <label className="flex flex-col gap-1 text-xs text-ink-muted">
                   Separation / Last Day
@@ -969,6 +981,16 @@ export default function EmployeeDetailPage({
                     disabled={!isEditing}
                     onChange={(e) => setResignedForm((f) => ({ ...f, separationDate: e.target.value }))}
                   />
+                  {(resignedForm.separationDate || employee.lastDay) && (
+                    <span className="text-[11px] text-ink-muted">
+                      {formatDate(
+                        resignedForm.separationDate
+                          ? new Date(resignedForm.separationDate).toISOString()
+                          : employee.lastDay!,
+                        "MMMM d, yyyy"
+                      )}
+                    </span>
+                  )}
                 </label>
               </div>
               <Button className="mt-2" variant="danger" disabled={!isEditing} onClick={generateCOEResigned}>
@@ -982,6 +1004,9 @@ export default function EmployeeDetailPage({
               )}
               onDateGiven={(req, value) =>
                 updateCoeRequest(req.id, { dateGiven: value ? new Date(value).toISOString() : undefined })
+              }
+              onDateRequested={(req, value) =>
+                updateCoeRequest(req.id, { dateRequested: new Date(value).toISOString() })
               }
               onRemove={(id) => {
                 const removed = coeRequests.find((r) => r.id === id);
@@ -1200,10 +1225,12 @@ export default function EmployeeDetailPage({
 function EmployeeCOERequestsList({
   requests,
   onDateGiven,
+  onDateRequested,
   onRemove,
 }: {
   requests: COERequest[];
   onDateGiven: (req: COERequest, value: string) => void;
+  onDateRequested: (req: COERequest, value: string) => void;
   onRemove: (id: string) => void;
 }) {
   if (requests.length === 0) {
@@ -1231,14 +1258,33 @@ function EmployeeCOERequestsList({
                 {req.category === "endOfEmployment" ? "COE for Resigned" : "COE with Purpose"}
               </td>
               <td className="px-3 py-2 text-ink-muted">{req.purpose || "—"}</td>
-              <td className="px-3 py-2 text-ink-muted">{formatDate(req.dateRequested)}</td>
               <td className="px-3 py-2">
-                <Input
-                  type="date"
-                  value={req.dateGiven ? req.dateGiven.slice(0, 10) : ""}
-                  onChange={(e) => onDateGiven(req, e.target.value)}
-                  className="min-w-[150px]"
-                />
+                <div className="flex flex-col gap-0.5">
+                  <Input
+                    type="date"
+                    value={req.dateRequested.slice(0, 10)}
+                    onChange={(e) => onDateRequested(req, e.target.value)}
+                    className="min-w-[150px]"
+                  />
+                  <span className="text-[11px] text-ink-muted">
+                    {formatDate(req.dateRequested, "MMMM d, yyyy")}
+                  </span>
+                </div>
+              </td>
+              <td className="px-3 py-2">
+                <div className="flex flex-col gap-0.5">
+                  <Input
+                    type="date"
+                    value={req.dateGiven ? req.dateGiven.slice(0, 10) : ""}
+                    onChange={(e) => onDateGiven(req, e.target.value)}
+                    className="min-w-[150px]"
+                  />
+                  {req.dateGiven && (
+                    <span className="text-[11px] text-ink-muted">
+                      {formatDate(req.dateGiven, "MMMM d, yyyy")}
+                    </span>
+                  )}
+                </div>
               </td>
               <td className="px-3 py-2">
                 <button onClick={() => onRemove(req.id)} className="text-xs text-ink-muted hover:text-warn">

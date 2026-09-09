@@ -348,7 +348,7 @@ export async function exportCOEWithPurposeDocx(
   xml = replaceHighlightedBlocksSequential(xml, [
     buildRun(purpose, { bold: true, upper: true }),
     buildRun(`${salutation} ${employeeName}`),
-    buildRun(employee?.position || ""),
+    buildRun(toTitleCasePosition(employee?.position || "")),
     buildRun(pronoun),
     buildRun(hiredDate),
     buildRun(compensation),
@@ -396,7 +396,7 @@ export async function exportCOEResignedDocx(employeeName: string, employee?: Emp
 
   xml = replaceHighlightedBlocksSequential(xml, [
     buildRun(`${salutation} ${employeeName}`),
-    buildRun(employee?.position || ""),
+    buildRun(toTitleCasePosition(employee?.position || "")),
     buildRun(duration),
     buildRun(dateIssued),
   ]);

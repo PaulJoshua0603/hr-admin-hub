@@ -29,7 +29,13 @@ export function daysUntil(iso: string): number {
 }
 
 export function formatDate(iso: string, pattern = "MMM d, yyyy"): string {
-  return format(parseISO(iso), pattern);
+  // Dates in this app are stored as UTC-midnight timestamps representing a
+  // calendar day (not a specific moment). Re-anchor to a local Date built
+  // from the UTC Y/M/D components before formatting, so the displayed
+  // calendar day never shifts based on the viewer's local timezone offset.
+  const d = parseISO(iso);
+  const safe = new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  return format(safe, pattern);
 }
 
 export function isOverdue(iso: string): boolean {

@@ -42,6 +42,8 @@ export default function EmployeesPage() {
   const [showForm, setShowForm] = useState(false);
   const [importing, setImporting] = useState(false);
   const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
+  const [confirmBulkComplete, setConfirmBulkComplete] = useState(false);
+  const [confirmDateFix, setConfirmDateFix] = useState(false);
   const [showDuplicates, setShowDuplicates] = useState(false);
   const [name, setName] = useState("");
   const [position, setPosition] = useState("");
@@ -105,17 +107,24 @@ export default function EmployeesPage() {
 
   function parseExcelDate(val: unknown): string | undefined {
     if (!val) return undefined;
-    if (val instanceof Date) return val.toISOString();
+    if (val instanceof Date) {
+      // Re-anchor to UTC midnight using the LOCAL calendar fields the xlsx
+      // library gave us, so the imported day never shifts due to timezone.
+      return new Date(Date.UTC(val.getFullYear(), val.getMonth(), val.getDate())).toISOString();
+    }
     if (typeof val === "string") {
       const trimmed = val.trim();
       if (!trimmed || /not yet set/i.test(trimmed)) return undefined;
       const d = new Date(trimmed);
-      return isNaN(d.getTime()) ? undefined : d.toISOString();
+      if (isNaN(d.getTime())) return undefined;
+      return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())).toISOString();
     }
     if (typeof val === "number") {
-      // Excel serial date
-      const d = new Date(Math.round((val - 25569) * 86400 * 1000));
-      return isNaN(d.getTime()) ? undefined : d.toISOString();
+      // Excel serial date (days since 1899-12-30), UTC-anchored directly.
+      const utcMs = Math.round((val - 25569) * 86400 * 1000);
+      const d = new Date(utcMs);
+      if (isNaN(d.getTime())) return undefined;
+      return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())).toISOString();
     }
     return undefined;
   }
@@ -299,6 +308,58 @@ export default function EmployeesPage() {
     setConfirmDeleteAll(false);
   }
 
+  const SEPTEMBER_EXCLUDED_NAMES = [
+    "Wilmar L. Gonzales",
+    "Mark Joseph M. Cabalquinto",
+    "Hazel E. Bayani",
+    "Maria Elena S. Mirador",
+    "Rachelle Jade A. Pedron",
+    "Elaiza Laceda",
+    "Precious G. Abalos",
+  ].map((n) => n.trim().toLowerCase());
+
+  function bulkMarkComplete() {
+    const now = todayISO();
+    const updated = employees.map((e) => {
+      if (SEPTEMBER_EXCLUDED_NAMES.includes(e.name.trim().toLowerCase())) return e;
+      return {
+        ...e,
+        requirements: { listOfRequirements: "complete", preEmploymentMedical: "complete" } as Employee["requirements"],
+        requirementsCompletedAt: now,
+        onboardingChecklist: (e.onboardingChecklist || []).map((cat) => ({
+          ...cat,
+          items: cat.items.map((it) => ({ ...it, checked: true })),
+        })),
+      };
+    });
+    setItems(updated);
+    notify(
+      `Marked requirements/onboarding complete for existing employees (excluded ${SEPTEMBER_EXCLUDED_NAMES.length} September hires)`,
+      "updated"
+    );
+    setConfirmBulkComplete(false);
+  }
+
+  function bulkFixDateShift() {
+    function plusOneDay(iso?: string): string | undefined {
+      if (!iso) return iso;
+      const d = new Date(iso);
+      d.setUTCDate(d.getUTCDate() + 1);
+      return d.toISOString();
+    }
+    const updated = employees.map((e) => ({
+      ...e,
+      birthday: plusOneDay(e.birthday),
+      dateHired: plusOneDay(e.dateHired),
+      lastDay: plusOneDay(e.lastDay),
+      dateRequirementsSent: plusOneDay(e.dateRequirementsSent),
+      lastPayDate: plusOneDay(e.lastPayDate),
+    }));
+    setItems(updated);
+    notify(`Corrected date shift (+1 day) for ${employees.length} employee(s)`, "updated");
+    setConfirmDateFix(false);
+  }
+
   function statusOf(e: Employee) {
     const complete = Object.values(e.requirements).every(
       (s) => s === "complete"
@@ -362,6 +423,36 @@ export default function EmployeesPage() {
               />
             </label>
             <Button onClick={() => setShowForm((s) => !s)}>+ Add employee</Button>
+            {employees.length > 0 &&
+              (confirmBulkComplete ? (
+                <div className="flex items-center gap-1.5">
+                  <Button variant="danger" onClick={bulkMarkComplete}>
+                    Confirm mark all complete
+                  </Button>
+                  <Button variant="ghost" onClick={() => setConfirmBulkComplete(false)}>
+                    Cancel
+                  </Button>
+                </div>
+              ) : (
+                <Button variant="ghost" onClick={() => setConfirmBulkComplete(true)}>
+                  Bulk: Mark Requirements/Onboarding Complete
+                </Button>
+              ))}
+            {employees.length > 0 &&
+              (confirmDateFix ? (
+                <div className="flex items-center gap-1.5">
+                  <Button variant="danger" onClick={bulkFixDateShift}>
+                    Confirm +1 day fix
+                  </Button>
+                  <Button variant="ghost" onClick={() => setConfirmDateFix(false)}>
+                    Cancel
+                  </Button>
+                </div>
+              ) : (
+                <Button variant="ghost" onClick={() => setConfirmDateFix(true)}>
+                  Fix Imported Date Shift (+1 day)
+                </Button>
+              ))}
             {employees.length > 0 &&
               (confirmDeleteAll ? (
                 <div className="flex items-center gap-1.5">
@@ -628,7 +719,7 @@ const MILESTONE_LABELS: Record<MilestoneType, string> = {
 };
 
 function AdvancedFilterView({ employees }: { employees: Employee[] }) {
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(false);
   const [category, setCategory] = useState<FilterCategory>("milestones");
   const [milestoneType, setMilestoneType] = useState<MilestoneType>("birthday");
   const today = new Date();
@@ -1269,7 +1360,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
 /* ------------------------- Centralized COE Tracker ------------------------- */
 
 function CentralizedCOETracker({ employees }: { employees: Employee[] }) {
-  const { items: requests, hydrated, remove } = useSupabaseStore<COERequest>(
+  const { items: requests, hydrated, remove, update: updateRequest } = useSupabaseStore<COERequest>(
     "hr_coe_requests",
     []
   );
@@ -1481,7 +1572,21 @@ function CentralizedCOETracker({ employees }: { employees: Employee[] }) {
                         </td>
                         <td className="px-3 py-2 text-ink-muted">{r.position || "—"}</td>
                         <td className="px-3 py-2 text-ink-muted">{r.department || "—"}</td>
-                        <td className="px-3 py-2 text-ink-muted">{formatDate(r.dateRequested, "MMMM d, yyyy")}</td>
+                        <td className="px-3 py-2">
+                          <div className="flex flex-col gap-0.5">
+                            <Input
+                              type="date"
+                              value={r.dateRequested.slice(0, 10)}
+                              onChange={(e) =>
+                                updateRequest(r.id, { dateRequested: new Date(e.target.value).toISOString() })
+                              }
+                              className="min-w-[150px]"
+                            />
+                            <span className="text-[11px] text-ink-muted">
+                              {formatDate(r.dateRequested, "MMMM d, yyyy")}
+                            </span>
+                          </div>
+                        </td>
                         <td className="px-3 py-2 text-ink-muted">
                           {r.category === "endOfEmployment" ? "Resigned" : r.purpose || "—"}
                         </td>
