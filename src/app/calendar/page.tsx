@@ -39,6 +39,7 @@ export default function CalendarPage() {
   const [month, setMonth] = useState(new Date());
   const [showForm, setShowForm] = useState(false);
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
+  const [dayModalKey, setDayModalKey] = useState<string | null>(null);
 
   const eventsByDay = useMemo(() => {
     const map = new Map<string, DayEvent[]>();
@@ -206,9 +207,16 @@ export default function CalendarPage() {
                     )
                   )}
                   {dayEvents.length > 2 && (
-                    <span className="text-[10px] text-ink-muted">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDayModalKey(key);
+                      }}
+                      className="text-left text-[10px] font-medium text-accent hover:underline"
+                    >
                       +{dayEvents.length - 2} more
-                    </span>
+                    </button>
                   )}
                 </div>
               </div>
@@ -216,6 +224,55 @@ export default function CalendarPage() {
           })}
         </div>
       </Card>
+
+      {dayModalKey && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setDayModalKey(null)}
+        >
+          <div
+            className="max-h-[80vh] w-full max-w-md overflow-y-auto rounded-lg bg-surface p-5 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="font-display text-lg text-ink">
+                {format(parseISO(dayModalKey), "MMMM d, yyyy")}
+              </h3>
+              <button
+                onClick={() => setDayModalKey(null)}
+                className="text-ink-muted hover:text-ink"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="flex flex-col gap-2">
+              {(eventsByDay.get(dayModalKey) || []).map((ev, i) =>
+                ev.employeeId ? (
+                  <Link
+                    key={i}
+                    href={`/employees/${ev.employeeId}`}
+                    onClick={() => setDayModalKey(null)}
+                    className="block hover:opacity-80"
+                  >
+                    <Pill tone={ev.tone}>
+                      {ev.time ? `${ev.time} · ` : ""}
+                      {ev.label}
+                    </Pill>
+                  </Link>
+                ) : (
+                  <span key={i} className="block">
+                    <Pill tone={ev.tone}>
+                      {ev.time ? `${ev.time} · ` : ""}
+                      {ev.label}
+                    </Pill>
+                  </span>
+                )
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {events.length > 0 && (
         <div className="mt-6">

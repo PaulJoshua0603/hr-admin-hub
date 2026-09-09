@@ -275,6 +275,13 @@ export const RESIGNED_STATUS_LABELS: Record<ResignedStatus, string> = {
   resigned: "Resigned",
 };
 
+export type MilestoneNote = {
+  id: string; // `${employeeId}-${milestoneType}` composite key
+  employeeId: string;
+  milestoneType: "birthday" | "third" | "sixth" | "oneYear";
+  note: string;
+};
+
 export type COECategory = "withPurpose" | "endOfEmployment";
 
 export type COERequest = {
@@ -379,6 +386,7 @@ export type Employee = {
   homeAddress?: string;
   homeCity?: string; // city/municipality, filled separately for docx templates like "City, Philippines"
   gender?: string;
+  immediateSupervisor?: string;
   workingHours?: string;
 };
 

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { v4 as uuid } from "uuid";
+import { format } from "date-fns";
 import { useSupabaseStore } from "@/lib/useSupabaseStore";
 import { addDaysISO, formatDate, isOverdue, todayISO } from "@/lib/dates";
 import { Button, Card, Input, Pill, SectionHeading } from "@/components/ui";
@@ -13,6 +14,8 @@ import {
   getMissingCriticalItems,
   defaultOnboardingChecklist,
   type Employee,
+  type MilestoneNote,
+  type COERequest,
 } from "@/types";
 import { useNotifications } from "@/lib/notificationContext";
 
@@ -176,6 +179,9 @@ export default function EmployeesPage() {
         const gross = formatGrossAmount(row["Monthly Gross"]);
         const basicSalary = formatGrossAmount(row["Base Salary"]);
         const lastDay = parseExcelDate(row["Separation Date"]);
+        const emailRaw = String(row["Email"] || row["Contact Info"] || "")
+          .replace(/^\s*Email:\s*/i, "")
+          .trim();
 
         imported.push({
           id: uuid(),
@@ -201,7 +207,9 @@ export default function EmployeesPage() {
           philhealthNo: String(row["PhilHealth"] || "").trim() || undefined,
           basicSalary: basicSalary,
           totalMonthlyGrossCompensation: gross,
-          realcognitaEmail: String(row["Email"] || "").trim() || undefined,
+          realcognitaEmail: emailRaw || undefined,
+          immediateSupervisor:
+            String(row["Immediate Supervisor"] || "").trim() || undefined,
         });
       }
 
@@ -214,6 +222,46 @@ export default function EmployeesPage() {
       notify(`Imported ${imported.length} employee(s) from Excel`, "created");
     } catch (err) {
       notify(`Import failed: ${err instanceof Error ? err.message : "Unknown error"}`, "warn");
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  async function handleImportEmailSupervisor(file: File) {
+    setImporting(true);
+    try {
+      const XLSX = await import("@e965/xlsx");
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array", cellDates: true });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows: Record<string, unknown>[] = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+
+      let matched = 0;
+      const updated = employees.map((e) => {
+        const row = rows.find(
+          (r) =>
+            String(r["Employee Name"] || "").trim().toLowerCase() === e.name.trim().toLowerCase()
+        );
+        if (!row) return e;
+        const email = String(row["Email"] || "").trim();
+        const supervisor = String(row["Immediate Supervisor"] || "").trim();
+        if (!email && !supervisor) return e;
+        matched += 1;
+        return {
+          ...e,
+          realcognitaEmail: email || e.realcognitaEmail,
+          immediateSupervisor: supervisor || e.immediateSupervisor,
+        };
+      });
+
+      if (matched === 0) {
+        notify("No matching employee names found to update.", "warn");
+        return;
+      }
+      setItems(updated);
+      notify(`Updated Email/Supervisor for ${matched} employee(s)`, "updated");
+    } catch (err) {
+      notify(`Update failed: ${err instanceof Error ? err.message : "Unknown error"}`, "warn");
     } finally {
       setImporting(false);
     }
@@ -293,6 +341,26 @@ export default function EmployeesPage() {
                 }}
               />
             </label>
+            <label className="cursor-pointer">
+              <span
+                className={`inline-flex items-center rounded-md border border-border bg-surface px-3 py-1.5 text-sm font-medium text-ink-muted hover:bg-background ${
+                  importing ? "opacity-50" : ""
+                }`}
+              >
+                {importing ? "Updating…" : "Update Email/Supervisor"}
+              </span>
+              <input
+                type="file"
+                accept=".xlsx,.xls"
+                className="hidden"
+                disabled={importing}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleImportEmailSupervisor(file);
+                  e.target.value = "";
+                }}
+              />
+            </label>
             <Button onClick={() => setShowForm((s) => !s)}>+ Add employee</Button>
             {employees.length > 0 &&
               (confirmDeleteAll ? (
@@ -312,6 +380,9 @@ export default function EmployeesPage() {
           </div>
         }
       />
+
+      <AdvancedFilterView employees={employees} />
+      <CentralizedCOETracker employees={employees} />
 
       {showDuplicates && duplicateGroups.length > 0 && (
         <Card className="mb-6">
@@ -486,16 +557,15 @@ export default function EmployeesPage() {
           );
         })}
       </div>
-
-      <AdvancedFilterView employees={employees} />
     </div>
   );
 }
 
 /* ------------------------- Advanced Filtering & Views ------------------------- */
 
-type FilterCategory = "milestones" | "resigned" | "newHires";
+type FilterCategory = "milestones" | "activeResigned" | "newHires";
 type MilestoneType = "birthday" | "third" | "sixth" | "oneYear";
+type TimeframePreset = "week" | "month" | "year" | "custom";
 
 type FilterRow = {
   id: string;
@@ -503,6 +573,7 @@ type FilterRow = {
   position: string;
   department: string;
   email: string;
+  supervisor: string;
   date: string; // ISO
 };
 
@@ -530,40 +601,104 @@ function startOfMonthISO(base: Date): string {
 function endOfMonthISO(base: Date): string {
   return new Date(base.getFullYear(), base.getMonth() + 1, 0).toISOString().slice(0, 10);
 }
+function startOfYearISO(base: Date): string {
+  return new Date(base.getFullYear(), 0, 1).toISOString().slice(0, 10);
+}
+function endOfYearISO(base: Date): string {
+  return new Date(base.getFullYear(), 11, 31).toISOString().slice(0, 10);
+}
+
+function ddmmyyyy(iso: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  return `${dd}/${mm}/${d.getFullYear()}`;
+}
+function spelledOut(iso: string): string {
+  if (!iso) return "";
+  return formatDate(iso, "MMMM d, yyyy");
+}
+
+const MILESTONE_LABELS: Record<MilestoneType, string> = {
+  birthday: "Birthday",
+  third: "3rd Month",
+  sixth: "6th Month",
+  oneYear: "1 Year",
+};
 
 function AdvancedFilterView({ employees }: { employees: Employee[] }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true);
   const [category, setCategory] = useState<FilterCategory>("milestones");
   const [milestoneType, setMilestoneType] = useState<MilestoneType>("birthday");
   const today = new Date();
+  const [preset, setPreset] = useState<TimeframePreset>("month");
   const [startDate, setStartDate] = useState(startOfMonthISO(today));
   const [endDate, setEndDate] = useState(endOfMonthISO(today));
   const [exporting, setExporting] = useState(false);
   const { notify } = useNotifications();
+  const { items: milestoneNotes, add: addNote, update: updateNote } = useSupabaseStore<MilestoneNote>(
+    "hr_milestone_notes",
+    []
+  );
 
-  function applyPreset(preset: "week" | "month") {
-    if (preset === "week") {
+  function applyPreset(p: TimeframePreset) {
+    setPreset(p);
+    if (p === "week") {
       setStartDate(startOfWeekISO(today));
       setEndDate(endOfWeekISO(today));
-    } else {
+    } else if (p === "month") {
       setStartDate(startOfMonthISO(today));
       setEndDate(endOfMonthISO(today));
+    } else if (p === "year") {
+      setStartDate(startOfYearISO(today));
+      setEndDate(endOfYearISO(today));
     }
   }
 
-  const rows: FilterRow[] = (() => {
-    if (category === "resigned") {
-      return employees
-        .filter((e) => e.lastDay && inRange(e.lastDay, startDate, endDate))
-        .map((e) => ({
-          id: e.id,
-          name: e.name,
-          position: e.position || "",
-          department: e.department || "",
-          email: e.realcognitaEmail || "",
-          date: e.lastDay!,
-        }));
+  function noteFor(employeeId: string, type: MilestoneType): string {
+    const n = milestoneNotes.find((m) => m.employeeId === employeeId && m.milestoneType === type);
+    return n?.note || "";
+  }
+
+  function setNoteFor(employeeId: string, type: MilestoneType, value: string) {
+    const existing = milestoneNotes.find((m) => m.employeeId === employeeId && m.milestoneType === type);
+    if (existing) {
+      updateNote(existing.id, { note: value });
+    } else {
+      addNote({ id: `${employeeId}-${type}`, employeeId, milestoneType: type, note: value });
     }
+  }
+
+  const activeRows: FilterRow[] = employees
+    .filter((e) => !e.lastDay && e.resignedStatus !== "resigned")
+    .filter((e) => inRange(e.dateAdded, startDate, endDate))
+    .map((e) => ({
+      id: e.id,
+      name: e.name,
+      position: e.position || "",
+      department: e.department || "",
+      email: e.realcognitaEmail || "",
+      supervisor: e.immediateSupervisor || "",
+      date: e.dateAdded,
+    }))
+    .sort((a, b) => (a.date < b.date ? -1 : 1));
+
+  const resignedRows: FilterRow[] = employees
+    .filter((e) => e.lastDay && inRange(e.lastDay, startDate, endDate))
+    .map((e) => ({
+      id: e.id,
+      name: e.name,
+      position: e.position || "",
+      department: e.department || "",
+      email: e.realcognitaEmail || "",
+      supervisor: e.immediateSupervisor || "",
+      date: e.lastDay!,
+    }))
+    .sort((a, b) => (a.date < b.date ? -1 : 1));
+
+  const rows: FilterRow[] = (() => {
+    if (category === "activeResigned") return [];
     if (category === "newHires") {
       return employees
         .filter((e) => e.dateHired && inRange(e.dateHired, startDate, endDate))
@@ -573,6 +708,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
           position: e.position || "",
           department: e.department || "",
           email: e.realcognitaEmail || "",
+          supervisor: e.immediateSupervisor || "",
           date: e.dateHired!,
         }));
     }
@@ -596,6 +732,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
             position: e.position || "",
             department: e.department || "",
             email: e.realcognitaEmail || "",
+            supervisor: e.immediateSupervisor || "",
             date: thisYear,
           };
         });
@@ -613,45 +750,255 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
           position: e.position || "",
           department: e.department || "",
           email: e.realcognitaEmail || "",
+          supervisor: e.immediateSupervisor || "",
           date: d.toISOString(),
         };
       })
       .filter((r) => inRange(r.date, startDate, endDate));
   })().sort((a, b) => (a.date < b.date ? -1 : 1));
 
+  const isMilestoneView = category === "milestones";
   const dateColumnLabel =
-    category === "resigned"
-      ? "Separation Date"
-      : category === "newHires"
-      ? "Hired Date"
-      : milestoneType === "birthday"
-      ? "Birthday"
-      : "Milestone Date";
+    category === "newHires" ? "Hired Date" : MILESTONE_LABELS[milestoneType];
+
+  function exportFileName(): string {
+    const monday = new Date(startDate);
+    const friday = new Date(endDate);
+    if (preset === "week") {
+      const sameMonth = monday.getMonth() === friday.getMonth();
+      const coverage = sameMonth
+        ? `${format(monday, "MMMM d")}-${format(friday, "d, yyyy")}`
+        : `${format(monday, "MMMM d")}-${format(friday, "MMMM d, yyyy")}`;
+      return `Employee Milestones - ${coverage}`;
+    }
+    if (preset === "year") {
+      return `Employee Milestones - ${monday.getFullYear()}`;
+    }
+    return `Employee Milestones - ${format(monday, "MMMM yyyy")}`;
+  }
+
+  function dynamicFileName(prefix: string): string {
+    const monday = new Date(startDate);
+    const friday = new Date(endDate);
+    if (preset === "week") {
+      const sameMonth = monday.getMonth() === friday.getMonth();
+      const coverage = sameMonth
+        ? `${format(monday, "MMMM")}${format(monday, "dd")}-${format(friday, "dd, yyyy")}`
+        : `${format(monday, "MMMM dd")}-${format(friday, "MMMM dd, yyyy")}`;
+      return `${prefix}-${coverage}`;
+    }
+    if (preset === "year") return `${prefix}-${monday.getFullYear()}`;
+    return `${prefix}-${format(monday, "MMMM, yyyy")}`;
+  }
+
+  function computeActiveResignedForRange(rangeStart: string, rangeEnd: string) {
+    const active = employees
+      .filter((e) => !e.lastDay && e.resignedStatus !== "resigned")
+      .filter((e) => inRange(e.dateAdded, rangeStart, rangeEnd));
+    const resigned = employees.filter((e) => e.lastDay && inRange(e.lastDay, rangeStart, rangeEnd));
+    return { active, resigned };
+  }
+
+  async function handleExportActiveResigned() {
+    setExporting(true);
+    try {
+      const ExcelJS = (await import("exceljs")).default;
+      const wb = new ExcelJS.Workbook();
+
+      function buildSheet(sheetName: string, rangeStart: string, rangeEnd: string) {
+        const ws = wb.addWorksheet(sheetName);
+        ws.columns = [{ width: 26 }, { width: 22 }, { width: 20 }, { width: 28 }, { width: 16 }];
+        const { active, resigned } = computeActiveResignedForRange(rangeStart, rangeEnd);
+
+        const activeTitle = ws.addRow([`Active Employees (${active.length})`]);
+        ws.mergeCells(activeTitle.number, 1, activeTitle.number, 5);
+        activeTitle.getCell(1).font = { bold: true, color: { argb: "FF0A2E2A" } };
+        activeTitle.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE4F0EE" } };
+        const activeHeader = ws.addRow(["Employee Name", "Position", "Department", "Email", "Date Added"]);
+        activeHeader.eachCell((c) => {
+          c.font = { bold: true, color: { argb: "FFFFFFFF" } };
+          c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0E5E56" } };
+        });
+        active.forEach((e) =>
+          ws.addRow([e.name, e.position || "", e.department || "", e.realcognitaEmail || "", formatDate(e.dateAdded, "MMMM d, yyyy")])
+        );
+        ws.addRow([]);
+
+        const resignedTitle = ws.addRow([`Resigned Employees (${resigned.length})`]);
+        ws.mergeCells(resignedTitle.number, 1, resignedTitle.number, 5);
+        resignedTitle.getCell(1).font = { bold: true, color: { argb: "FF0A2E2A" } };
+        resignedTitle.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE4F0EE" } };
+        const resignedHeader = ws.addRow(["Employee Name", "Position", "Department", "Email", "Separation Date"]);
+        resignedHeader.eachCell((c) => {
+          c.font = { bold: true, color: { argb: "FFFFFFFF" } };
+          c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0E5E56" } };
+        });
+        resigned.forEach((e) =>
+          ws.addRow([e.name, e.position || "", e.department || "", e.realcognitaEmail || "", formatDate(e.lastDay!, "MMMM d, yyyy")])
+        );
+        ws.addRow([]);
+        const totalRow = ws.addRow([`Total: ${active.length + resigned.length} (Active: ${active.length}, Resigned: ${resigned.length})`]);
+        totalRow.getCell(1).font = { bold: true };
+      }
+
+      buildSheet("This Week", startOfWeekISO(today), endOfWeekISO(today));
+      buildSheet("This Month", startOfMonthISO(today), endOfMonthISO(today));
+      buildSheet("This Year", startOfYearISO(today), endOfYearISO(today));
+
+      const buffer = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${dynamicFileName("Active/Resigned")}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      notify("Exported Active/Resigned report to Excel", "created");
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  async function handleExportNewHires() {
+    setExporting(true);
+    try {
+      const ExcelJS = (await import("exceljs")).default;
+      const wb = new ExcelJS.Workbook();
+
+      function buildSheet(sheetName: string, rangeStart: string, rangeEnd: string) {
+        const ws = wb.addWorksheet(sheetName);
+        ws.columns = [{ width: 26 }, { width: 22 }, { width: 20 }, { width: 28 }, { width: 16 }];
+        const newHires = employees.filter((e) => e.dateHired && inRange(e.dateHired, rangeStart, rangeEnd));
+        const headerRow = ws.addRow(["Employee Name", "Position", "Department", "Email", "Hired Date"]);
+        headerRow.eachCell((c) => {
+          c.font = { bold: true, color: { argb: "FFFFFFFF" } };
+          c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0E5E56" } };
+        });
+        newHires.forEach((e) =>
+          ws.addRow([e.name, e.position || "", e.department || "", e.realcognitaEmail || "", formatDate(e.dateHired!, "MMMM d, yyyy")])
+        );
+        ws.addRow([]);
+        const totalRow = ws.addRow([`Total: ${newHires.length}`]);
+        totalRow.getCell(1).font = { bold: true };
+      }
+
+      buildSheet("This Week", startOfWeekISO(today), endOfWeekISO(today));
+      buildSheet("This Month", startOfMonthISO(today), endOfMonthISO(today));
+      buildSheet("This Year", startOfYearISO(today), endOfYearISO(today));
+
+      const buffer = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${dynamicFileName("New Hires")}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      notify("Exported New Hires report to Excel", "created");
+    } finally {
+      setExporting(false);
+    }
+  }
 
   async function handleExport() {
     setExporting(true);
     try {
       const ExcelJS = (await import("exceljs")).default;
       const wb = new ExcelJS.Workbook();
-      const ws = wb.addWorksheet("Filtered View");
-      ws.columns = [
-        { width: 26 },
-        { width: 24 },
-        { width: 20 },
-        { width: 28 },
-        { width: 18 },
-      ];
-      const headerRow = ws.addRow(["Employee Name", "Position", "Department", "Email", dateColumnLabel]);
-      headerRow.eachCell((cell) => {
-        cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
-        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0E5E56" } };
-      });
-      rows.forEach((r) => {
-        ws.addRow([r.name, r.position, r.department, r.email, formatDate(r.date, "MMMM d, yyyy")]);
-      });
-      ws.addRow([]);
-      const totalRow = ws.addRow([`Total: ${rows.length}`]);
-      totalRow.getCell(1).font = { bold: true };
+
+      function buildSheet(sheetName: string, type: MilestoneType, sheetRows: FilterRow[]) {
+        const ws = wb.addWorksheet(sheetName);
+        ws.columns = [
+          { width: 26 },
+          { width: 26 },
+          { width: 20 },
+          { width: 22 },
+          { width: 28 },
+          { width: 18 },
+          { width: 24 },
+        ];
+        const titleRow = ws.addRow([sheetName]);
+        ws.mergeCells(titleRow.number, 1, titleRow.number, 7);
+        titleRow.getCell(1).font = { bold: true, size: 13, color: { argb: "FF0A2E2A" } };
+        titleRow.getCell(1).fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: "FFE4F0EE" },
+        };
+        const headerRow = ws.addRow([
+          "Employee Name",
+          "Position",
+          "Department",
+          "Immediate Supervisor",
+          "Email",
+          MILESTONE_LABELS[type],
+          "Notes",
+        ]);
+        headerRow.eachCell((cell) => {
+          cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0E5E56" } };
+        });
+        sheetRows.forEach((r) => {
+          ws.addRow([
+            r.name,
+            r.position,
+            r.department,
+            r.supervisor,
+            r.email,
+            formatDate(r.date, "MMMM d, yyyy"),
+            noteFor(r.id, type),
+          ]);
+        });
+      }
+
+      function computeRowsFor(type: MilestoneType): FilterRow[] {
+        if (type === "birthday") {
+          return employees
+            .filter((e) => e.birthday)
+            .map((e) => {
+              const b = new Date(e.birthday!);
+              const thisYear = new Date(today.getFullYear(), b.getMonth(), b.getDate()).toISOString();
+              return {
+                id: e.id,
+                name: e.name,
+                position: e.position || "",
+                department: e.department || "",
+                email: e.realcognitaEmail || "",
+                supervisor: e.immediateSupervisor || "",
+                date: thisYear,
+              };
+            })
+            .filter((r) => inRange(r.date, startDate, endDate))
+            .sort((a, b) => (a.date < b.date ? -1 : 1));
+        }
+        const monthsMap: Record<MilestoneType, number> = { birthday: 0, third: 3, sixth: 6, oneYear: 12 };
+        return employees
+          .filter((e) => e.dateHired && !e.lastDay)
+          .map((e) => {
+            const d = new Date(e.dateHired!);
+            d.setMonth(d.getMonth() + monthsMap[type]);
+            return {
+              id: e.id,
+              name: e.name,
+              position: e.position || "",
+              department: e.department || "",
+              email: e.realcognitaEmail || "",
+              supervisor: e.immediateSupervisor || "",
+              date: d.toISOString(),
+            };
+          })
+          .filter((r) => inRange(r.date, startDate, endDate))
+          .sort((a, b) => (a.date < b.date ? -1 : 1));
+      }
+
+      buildSheet("Birthdays", "birthday", computeRowsFor("birthday"));
+      buildSheet("3rd Month", "third", computeRowsFor("third"));
+      buildSheet("6th Month", "sixth", computeRowsFor("sixth"));
+      buildSheet("1 Year", "oneYear", computeRowsFor("oneYear"));
 
       const buffer = await wb.xlsx.writeBuffer();
       const blob = new Blob([buffer], {
@@ -660,20 +1007,19 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      const catLabel = category === "milestones" ? milestoneType : category;
-      a.download = `${catLabel}_${startDate}_to_${endDate}.xlsx`;
+      a.download = `${exportFileName()}.xlsx`;
       document.body.appendChild(a);
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-      notify(`Exported ${rows.length} record(s) to Excel`, "created");
+      notify(`Exported milestone report to Excel`, "created");
     } finally {
       setExporting(false);
     }
   }
 
   return (
-    <div className="mt-10">
+    <div className="mb-10">
       <button
         onClick={() => setExpanded((s) => !s)}
         className="flex w-full items-center justify-between gap-3 text-left"
@@ -681,7 +1027,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
         <div>
           <h2 className="font-display text-2xl text-ink">Advanced Filtering & Custom Views</h2>
           <p className="mt-1 text-sm text-ink-muted">
-            Filter by Milestones, Resigned Employees, or New Hires within a date range.
+            Filter by Milestones, Active, Resigned, or New Hires within a date range.
           </p>
         </div>
         <span className={`text-ink-muted transition-transform ${expanded ? "rotate-90" : ""}`}>›</span>
@@ -690,10 +1036,10 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
       {expanded && (
         <Card className="mt-4">
           <div className="flex flex-wrap items-center gap-2">
-            <div className="flex gap-1 rounded-lg bg-background p-1 w-fit">
+            <div className="flex flex-wrap gap-1 rounded-lg bg-background p-1 w-fit">
               {([
                 { id: "milestones" as const, label: "Milestones" },
-                { id: "resigned" as const, label: "Resigned Employees" },
+                { id: "activeResigned" as const, label: "Active/Resigned" },
                 { id: "newHires" as const, label: "New Hires" },
               ]).map((c) => (
                 <button
@@ -708,7 +1054,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
               ))}
             </div>
 
-            {category === "milestones" && (
+            {isMilestoneView && (
               <div className="flex gap-1 rounded-lg bg-background p-1 w-fit">
                 {([
                   { id: "birthday" as const, label: "Birthdays" },
@@ -733,11 +1079,31 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
           <div className="mt-3 flex flex-wrap items-end gap-3">
             <label className="flex flex-col gap-1 text-xs text-ink-muted">
               Start date
-              <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+              <Input
+                type="date"
+                value={startDate}
+                onChange={(e) => {
+                  setPreset("custom");
+                  setStartDate(e.target.value);
+                }}
+              />
+              <span className="text-[11px] text-ink-muted">
+                {ddmmyyyy(startDate)} — {spelledOut(startDate)}
+              </span>
             </label>
             <label className="flex flex-col gap-1 text-xs text-ink-muted">
               End date
-              <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+              <Input
+                type="date"
+                value={endDate}
+                onChange={(e) => {
+                  setPreset("custom");
+                  setEndDate(e.target.value);
+                }}
+              />
+              <span className="text-[11px] text-ink-muted">
+                {ddmmyyyy(endDate)} — {spelledOut(endDate)}
+              </span>
             </label>
             <Button variant="ghost" onClick={() => applyPreset("week")}>
               This Week
@@ -745,43 +1111,413 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
             <Button variant="ghost" onClick={() => applyPreset("month")}>
               This Month
             </Button>
-            <Button onClick={handleExport} disabled={exporting || rows.length === 0} className="ml-auto">
+            <Button variant="ghost" onClick={() => applyPreset("year")}>
+              This Year
+            </Button>
+            {isMilestoneView && (
+              <Button onClick={handleExport} disabled={exporting} className="ml-auto">
+                {exporting ? "Exporting…" : "Export to Excel"}
+              </Button>
+            )}
+            {category === "activeResigned" && (
+              <Button onClick={handleExportActiveResigned} disabled={exporting} className="ml-auto">
+                {exporting ? "Exporting…" : "Export to Excel"}
+              </Button>
+            )}
+            {category === "newHires" && (
+              <Button onClick={handleExportNewHires} disabled={exporting} className="ml-auto">
+                {exporting ? "Exporting…" : "Export to Excel"}
+              </Button>
+            )}
+          </div>
+
+          {category === "activeResigned" ? (
+            <>
+              <p className="mt-4 text-sm font-medium text-ink">
+                Active Employees — Total: {activeRows.length}
+              </p>
+              {activeRows.length === 0 ? (
+                <div className="mt-2 rounded-lg border border-dashed border-border p-6 text-center text-sm text-ink-muted">
+                  No active employees in this date range.
+                </div>
+              ) : (
+                <div className="mt-2 overflow-x-auto rounded-lg border border-border">
+                  <table className="w-full min-w-[820px] text-left text-sm">
+                    <thead>
+                      <tr className="bg-background text-xs uppercase tracking-wide text-ink-muted">
+                        <th className="px-3 py-2">Employee Name</th>
+                        <th className="px-3 py-2">Position</th>
+                        <th className="px-3 py-2">Department</th>
+                        <th className="px-3 py-2">Email</th>
+                        <th className="px-3 py-2">Date Added</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {activeRows.map((r) => (
+                        <tr key={r.id} className="border-t border-border">
+                          <td className="px-3 py-2 text-ink">
+                            <Link href={`/employees/${r.id}`} className="hover:text-accent">
+                              {r.name}
+                            </Link>
+                          </td>
+                          <td className="px-3 py-2 text-ink-muted">{r.position || "—"}</td>
+                          <td className="px-3 py-2 text-ink-muted">{r.department || "—"}</td>
+                          <td className="px-3 py-2 text-ink-muted">{r.email || "—"}</td>
+                          <td className="px-3 py-2 text-ink-muted">{formatDate(r.date, "MMMM d, yyyy")}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              <p className="mt-6 text-sm font-medium text-ink">
+                Resigned Employees — Total: {resignedRows.length}
+              </p>
+              {resignedRows.length === 0 ? (
+                <div className="mt-2 rounded-lg border border-dashed border-border p-6 text-center text-sm text-ink-muted">
+                  No resigned employees in this date range.
+                </div>
+              ) : (
+                <div className="mt-2 overflow-x-auto rounded-lg border border-border">
+                  <table className="w-full min-w-[820px] text-left text-sm">
+                    <thead>
+                      <tr className="bg-background text-xs uppercase tracking-wide text-ink-muted">
+                        <th className="px-3 py-2">Employee Name</th>
+                        <th className="px-3 py-2">Position</th>
+                        <th className="px-3 py-2">Department</th>
+                        <th className="px-3 py-2">Email</th>
+                        <th className="px-3 py-2">Separation Date</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {resignedRows.map((r) => (
+                        <tr key={r.id} className="border-t border-border">
+                          <td className="px-3 py-2 text-ink">
+                            <Link href={`/employees/${r.id}`} className="hover:text-accent">
+                              {r.name}
+                            </Link>
+                          </td>
+                          <td className="px-3 py-2 text-ink-muted">{r.position || "—"}</td>
+                          <td className="px-3 py-2 text-ink-muted">{r.department || "—"}</td>
+                          <td className="px-3 py-2 text-ink-muted">{r.email || "—"}</td>
+                          <td className="px-3 py-2 text-ink-muted">{formatDate(r.date, "MMMM d, yyyy")}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <p className="mt-4 text-sm font-medium text-ink">Total: {rows.length}</p>
+
+              {rows.length === 0 ? (
+                <div className="mt-2 rounded-lg border border-dashed border-border p-6 text-center text-sm text-ink-muted">
+                  No matching records for this filter and date range.
+                </div>
+              ) : (
+                <div className="mt-2 overflow-x-auto rounded-lg border border-border">
+                  <table className="w-full min-w-[820px] text-left text-sm">
+                    <thead>
+                      <tr className="bg-background text-xs uppercase tracking-wide text-ink-muted">
+                        <th className="px-3 py-2">Employee Name</th>
+                        <th className="px-3 py-2">Position</th>
+                        <th className="px-3 py-2">Department</th>
+                        <th className="px-3 py-2">Email</th>
+                        <th className="px-3 py-2">{dateColumnLabel}</th>
+                        {isMilestoneView && <th className="px-3 py-2">Notes</th>}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((r) => (
+                        <tr key={r.id} className="border-t border-border">
+                          <td className="px-3 py-2 text-ink">
+                            <Link href={`/employees/${r.id}`} className="hover:text-accent">
+                              {r.name}
+                            </Link>
+                          </td>
+                          <td className="px-3 py-2 text-ink-muted">{r.position || "—"}</td>
+                          <td className="px-3 py-2 text-ink-muted">{r.department || "—"}</td>
+                          <td className="px-3 py-2 text-ink-muted">{r.email || "—"}</td>
+                          <td className="px-3 py-2 text-ink-muted">{formatDate(r.date, "MMMM d, yyyy")}</td>
+                          {isMilestoneView && (
+                            <td className="px-3 py-2">
+                              <Input
+                                placeholder="e.g. Done, Messaged"
+                                defaultValue={noteFor(r.id, milestoneType)}
+                                onBlur={(e) => setNoteFor(r.id, milestoneType, e.target.value)}
+                                className="min-w-[160px]"
+                              />
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          )}
+        </Card>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------- Centralized COE Tracker ------------------------- */
+
+function CentralizedCOETracker({ employees }: { employees: Employee[] }) {
+  const { items: requests, hydrated, remove } = useSupabaseStore<COERequest>(
+    "hr_coe_requests",
+    []
+  );
+  const { update: updateEmployee } = useSupabaseStore<Employee>("hr_employees", []);
+  const [expanded, setExpanded] = useState(false);
+  const today = new Date();
+  const [preset, setPreset] = useState<TimeframePreset>("month");
+  const [startDate, setStartDate] = useState(startOfMonthISO(today));
+  const [endDate, setEndDate] = useState(endOfMonthISO(today));
+  const [exporting, setExporting] = useState(false);
+  const { notify } = useNotifications();
+
+  function applyPreset(p: TimeframePreset) {
+    setPreset(p);
+    if (p === "week") {
+      setStartDate(startOfWeekISO(today));
+      setEndDate(endOfWeekISO(today));
+    } else if (p === "month") {
+      setStartDate(startOfMonthISO(today));
+      setEndDate(endOfMonthISO(today));
+    } else if (p === "year") {
+      setStartDate(startOfYearISO(today));
+      setEndDate(endOfYearISO(today));
+    }
+  }
+
+  if (!hydrated) return null;
+
+  const filtered = [...requests]
+    .filter((r) => inRange(r.dateRequested, startDate, endDate))
+    .sort((a, b) => (a.dateRequested < b.dateRequested ? 1 : -1));
+
+  function exportFileName(): string {
+    const monday = new Date(startDate);
+    const friday = new Date(endDate);
+    if (preset === "week") {
+      const sameMonth = monday.getMonth() === friday.getMonth();
+      const coverage = sameMonth
+        ? `${format(monday, "MMMM d")}-${format(friday, "d, yyyy")}`
+        : `${format(monday, "MMMM d")}-${format(friday, "MMMM d, yyyy")}`;
+      return `COE_${coverage}`;
+    }
+    if (preset === "year") return `COE_${monday.getFullYear()}`;
+    return `COE_${format(monday, "MMMM yyyy")}`;
+  }
+
+  async function handleExport() {
+    setExporting(true);
+    try {
+      const ExcelJS = (await import("exceljs")).default;
+      const wb = new ExcelJS.Workbook();
+
+      function buildSheet(name: string, rows: COERequest[]) {
+        const ws = wb.addWorksheet(name);
+        ws.columns = [
+          { width: 26 },
+          { width: 24 },
+          { width: 20 },
+          { width: 16 },
+          { width: 24 },
+          { width: 16 },
+        ];
+        const headerRow = ws.addRow([
+          "Employee Name",
+          "Position",
+          "Department",
+          "Date Requested",
+          "Purpose",
+          "Date Issued",
+        ]);
+        headerRow.eachCell((cell) => {
+          cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0E5E56" } };
+        });
+        rows.forEach((r) => {
+          ws.addRow([
+            r.employeeName,
+            r.position,
+            r.department,
+            formatDate(r.dateRequested, "MMMM d, yyyy"),
+            r.category === "endOfEmployment" ? "Resigned" : r.purpose || "—",
+            r.dateGiven ? formatDate(r.dateGiven, "MMMM d, yyyy") : "—",
+          ]);
+        });
+      }
+
+      buildSheet(
+        "COE with Purpose",
+        filtered.filter((r) => r.category !== "endOfEmployment")
+      );
+      buildSheet(
+        "COE for Resigned",
+        filtered.filter((r) => r.category === "endOfEmployment")
+      );
+
+      const buffer = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buffer], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${exportFileName()}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      notify("Exported COE tracker to Excel", "created");
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  return (
+    <div className="mb-10">
+      <button
+        onClick={() => setExpanded((s) => !s)}
+        className="flex w-full items-center justify-between gap-3 text-left"
+      >
+        <div>
+          <h2 className="font-display text-2xl text-ink">Centralized COE Tracker</h2>
+          <p className="mt-1 text-sm text-ink-muted">
+            All generated Certificates of Employment, synced automatically from each employee&apos;s profile.
+          </p>
+        </div>
+        <span className={`text-ink-muted transition-transform ${expanded ? "rotate-90" : ""}`}>›</span>
+      </button>
+
+      {expanded && (
+        <Card className="mt-4">
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="flex flex-col gap-1 text-xs text-ink-muted">
+              Start date
+              <Input
+                type="date"
+                value={startDate}
+                onChange={(e) => {
+                  setPreset("custom");
+                  setStartDate(e.target.value);
+                }}
+              />
+              <span className="text-[11px] text-ink-muted">
+                {ddmmyyyy(startDate)} — {spelledOut(startDate)}
+              </span>
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-ink-muted">
+              End date
+              <Input
+                type="date"
+                value={endDate}
+                onChange={(e) => {
+                  setPreset("custom");
+                  setEndDate(e.target.value);
+                }}
+              />
+              <span className="text-[11px] text-ink-muted">
+                {ddmmyyyy(endDate)} — {spelledOut(endDate)}
+              </span>
+            </label>
+            <Button variant="ghost" onClick={() => applyPreset("week")}>
+              This Week
+            </Button>
+            <Button variant="ghost" onClick={() => applyPreset("month")}>
+              This Month
+            </Button>
+            <Button variant="ghost" onClick={() => applyPreset("year")}>
+              This Year
+            </Button>
+            <Button onClick={handleExport} disabled={exporting} className="ml-auto">
               {exporting ? "Exporting…" : "Export to Excel"}
             </Button>
           </div>
 
-          <p className="mt-4 text-sm font-medium text-ink">Total: {rows.length}</p>
+          <p className="mt-4 text-sm font-medium text-ink">Total: {filtered.length}</p>
 
-          {rows.length === 0 ? (
+          {filtered.length === 0 ? (
             <div className="mt-2 rounded-lg border border-dashed border-border p-6 text-center text-sm text-ink-muted">
-              No matching records for this filter and date range.
+              No COE requests logged in this date range.
             </div>
           ) : (
             <div className="mt-2 overflow-x-auto rounded-lg border border-border">
-              <table className="w-full min-w-[720px] text-left text-sm">
+              <table className="w-full min-w-[820px] text-left text-sm">
                 <thead>
                   <tr className="bg-background text-xs uppercase tracking-wide text-ink-muted">
                     <th className="px-3 py-2">Employee Name</th>
                     <th className="px-3 py-2">Position</th>
                     <th className="px-3 py-2">Department</th>
-                    <th className="px-3 py-2">Email</th>
-                    <th className="px-3 py-2">{dateColumnLabel}</th>
+                    <th className="px-3 py-2">Date Requested</th>
+                    <th className="px-3 py-2">Purpose</th>
+                    <th className="px-3 py-2">Date Issued</th>
+                    <th className="px-3 py-2" />
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((r) => (
-                    <tr key={r.id} className="border-t border-border">
-                      <td className="px-3 py-2 text-ink">
-                        <Link href={`/employees/${r.id}`} className="hover:text-accent">
-                          {r.name}
-                        </Link>
-                      </td>
-                      <td className="px-3 py-2 text-ink-muted">{r.position || "—"}</td>
-                      <td className="px-3 py-2 text-ink-muted">{r.department || "—"}</td>
-                      <td className="px-3 py-2 text-ink-muted">{r.email || "—"}</td>
-                      <td className="px-3 py-2 text-ink-muted">{formatDate(r.date, "MMMM d, yyyy")}</td>
-                    </tr>
-                  ))}
+                  {filtered.map((r) => {
+                    const emp = employees.find(
+                      (e) => e.name.trim().toLowerCase() === r.employeeName.trim().toLowerCase()
+                    );
+                    return (
+                      <tr key={r.id} className="border-t border-border">
+                        <td className="px-3 py-2 text-ink">
+                          {emp ? (
+                            <Link href={`/employees/${emp.id}`} className="hover:text-accent">
+                              {r.employeeName}
+                            </Link>
+                          ) : (
+                            r.employeeName
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-ink-muted">{r.position || "—"}</td>
+                        <td className="px-3 py-2 text-ink-muted">{r.department || "—"}</td>
+                        <td className="px-3 py-2 text-ink-muted">{formatDate(r.dateRequested, "MMMM d, yyyy")}</td>
+                        <td className="px-3 py-2 text-ink-muted">
+                          {r.category === "endOfEmployment" ? "Resigned" : r.purpose || "—"}
+                        </td>
+                        <td className="px-3 py-2 text-ink-muted">
+                          {r.dateGiven ? formatDate(r.dateGiven, "MMMM d, yyyy") : "—"}
+                        </td>
+                        <td className="px-3 py-2">
+                          <button
+                            onClick={() => {
+                              remove(r.id);
+                              notify(`COE record deleted for "${r.employeeName}"`, "deleted");
+                              if (r.category === "endOfEmployment") {
+                                const stillHasResignedCOE = requests.some(
+                                  (other) =>
+                                    other.id !== r.id &&
+                                    other.category === "endOfEmployment" &&
+                                    other.employeeName.trim().toLowerCase() ===
+                                      r.employeeName.trim().toLowerCase()
+                                );
+                                if (!stillHasResignedCOE && emp) {
+                                  updateEmployee(emp.id, { lastDay: undefined, resignedStatus: "active" });
+                                  notify(
+                                    `${r.employeeName} — milestone tracking restored`,
+                                    "updated"
+                                  );
+                                }
+                              }
+                            }}
+                            className="text-xs text-ink-muted hover:text-warn"
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

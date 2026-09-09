@@ -12,6 +12,8 @@ import {
   exportRequirementsListDocx,
   exportCOEWithPurposeDocx,
   exportCOEResignedDocx,
+  exportRegularizationWithIncreaseDocx,
+  exportRegularizationNoIncreaseDocx,
   listEmployeeCOEFiles,
   downloadEmployeeCOEFile,
   deleteEmployeeCOEFile,
@@ -688,6 +690,14 @@ export default function EmployeeDetailPage({
               <option value="7:30am – 4:30pm">7:30am – 4:30pm</option>
             </select>
           </FieldGroup>
+          <FieldGroup label="Immediate Supervisor">
+            <Input
+              placeholder="e.g. Paula J. Paguntalan"
+              value={employee.immediateSupervisor || ""}
+              disabled={!isEditing}
+              onChange={(e) => update(employee.id, { immediateSupervisor: e.target.value })}
+            />
+          </FieldGroup>
         </div>
       </Card>
 
@@ -838,10 +848,28 @@ export default function EmployeeDetailPage({
               {milestones.map((m) => (
                 <li
                   key={m.key}
-                  className="flex items-center justify-between rounded-md bg-background px-3 py-2 text-sm"
+                  className="flex flex-col gap-2 rounded-md bg-background px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between"
                 >
-                  <span className="text-ink">{m.label}</span>
-                  <span className="text-ink-muted">{formatDate(m.date)}</span>
+                  <div className="flex items-center justify-between gap-3 sm:justify-start">
+                    <span className="text-ink">{m.label}</span>
+                    <span className="text-ink-muted">{formatDate(m.date)}</span>
+                  </div>
+                  {m.key === "sixthMonth" && (
+                    <div className="flex gap-2">
+                      <Button
+                        variant="ghost"
+                        onClick={() => exportRegularizationWithIncreaseDocx(employee)}
+                      >
+                        Regularization W/Increase
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        onClick={() => exportRegularizationNoIncreaseDocx(employee)}
+                      >
+                        Regularization No Increase
+                      </Button>
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>
@@ -955,7 +983,25 @@ export default function EmployeeDetailPage({
               onDateGiven={(req, value) =>
                 updateCoeRequest(req.id, { dateGiven: value ? new Date(value).toISOString() : undefined })
               }
-              onRemove={(id) => removeCoeRequest(id)}
+              onRemove={(id) => {
+                const removed = coeRequests.find((r) => r.id === id);
+                removeCoeRequest(id);
+                if (removed?.category === "endOfEmployment") {
+                  const stillHasResignedCOE = coeRequests.some(
+                    (r) =>
+                      r.id !== id &&
+                      r.category === "endOfEmployment" &&
+                      r.employeeName.trim().toLowerCase() === employee.name.trim().toLowerCase()
+                  );
+                  if (!stillHasResignedCOE) {
+                    update(employee.id, { lastDay: undefined, resignedStatus: "active" });
+                    notify(
+                      `${employee.name} — milestone tracking restored (Last Day cleared)`,
+                      "updated"
+                    );
+                  }
+                }
+              }}
             />
           </div>
         </Card>

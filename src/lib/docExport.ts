@@ -411,6 +411,106 @@ export async function exportCOEResignedDocx(employeeName: string, employee?: Emp
   saveBlob(outBlob, filename);
 }
 
+function firstNameOf(fullName: string): string {
+  const parts = fullName.trim().split(/\s+/);
+  const idx = parts.findIndex((p) => /^[A-Za-z]\.$/.test(p));
+  const givenNames = idx > 0 ? parts.slice(0, idx) : [parts[0]];
+  return givenNames.join(" ") || fullName;
+}
+
+function toTitleCasePosition(text: string): string {
+  if (!text) return text;
+  return text
+    .toLowerCase()
+    .split(/(\s+|\/|-)/)
+    .map((w) => (/^[a-z]/.test(w) ? w.charAt(0).toUpperCase() + w.slice(1) : w))
+    .join("");
+}
+
+function buildRunSmall(text: string): string {
+  return `<w:r><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:cs="Arial"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:t xml:space="preserve">${escapeXml(
+    text
+  )}</w:t></w:r>`;
+}
+
+export async function exportRegularizationWithIncreaseDocx(employee: Employee) {
+  const blob = await fetch("/templates/regularization-with-increase.docx").then((r) => r.blob());
+  const JSZip = (await import("jszip")).default;
+  const zip = await JSZip.loadAsync(blob);
+  const docPath = "word/document.xml";
+  const file = zip.file(docPath);
+  const filename = `Regularization W/Increase (${employee.name})`;
+  if (!file) {
+    saveBlob(blob, `${filename}.docx`);
+    return;
+  }
+  let xml = await file.async("text");
+
+  const dateIssued = formatDate(new Date().toISOString(), "MMMM d, yyyy");
+  const regDate = employee.dateHired
+    ? formatDate(addMonthsISOLocal(employee.dateHired, 6), "MMMM d, yyyy")
+    : "";
+
+  xml = replaceHighlightedBlocksSequential(xml, [
+    buildRunSmall(dateIssued),
+    buildRunSmall(employee.name),
+    buildRunSmall(toTitleCasePosition(employee.position || "")),
+    buildRunSmall(firstNameOf(employee.name)),
+    buildRunSmall(regDate),
+    buildRunSmall(employee.basicSalary || "0.00"),
+    buildRunSmall(employee.totalMonthlyGrossCompensation || "0.00"),
+    buildRunSmall(employee.name),
+  ]);
+
+  zip.file(docPath, xml);
+  const outBlob = await zip.generateAsync({
+    type: "blob",
+    mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  });
+  saveBlob(outBlob, `${filename}.docx`);
+}
+
+export async function exportRegularizationNoIncreaseDocx(employee: Employee) {
+  const blob = await fetch("/templates/regularization-no-increase.docx").then((r) => r.blob());
+  const JSZip = (await import("jszip")).default;
+  const zip = await JSZip.loadAsync(blob);
+  const docPath = "word/document.xml";
+  const file = zip.file(docPath);
+  const filename = `Regularization No Increase (${employee.name})`;
+  if (!file) {
+    saveBlob(blob, `${filename}.docx`);
+    return;
+  }
+  let xml = await file.async("text");
+
+  const dateIssued = formatDate(new Date().toISOString(), "MMMM d, yyyy");
+  const regDate = employee.dateHired
+    ? formatDate(addMonthsISOLocal(employee.dateHired, 6), "MMMM d, yyyy")
+    : "";
+
+  xml = replaceHighlightedBlocksSequential(xml, [
+    buildRunSmall(dateIssued),
+    buildRunSmall(employee.name),
+    buildRunSmall(toTitleCasePosition(employee.position || "")),
+    buildRunSmall(firstNameOf(employee.name)),
+    buildRunSmall(regDate),
+    buildRunSmall(employee.name),
+  ]);
+
+  zip.file(docPath, xml);
+  const outBlob = await zip.generateAsync({
+    type: "blob",
+    mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  });
+  saveBlob(outBlob, `${filename}.docx`);
+}
+
+function addMonthsISOLocal(iso: string, months: number): string {
+  const d = new Date(iso);
+  d.setMonth(d.getMonth() + months);
+  return d.toISOString();
+}
+
 export async function listEmployeeCOEFiles(employeeId: string) {
   if (!supabaseReady) return [];
   const { data, error } = await supabase.storage.from("files").list(`coe-files/${employeeId}`, {
