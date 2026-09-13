@@ -86,6 +86,9 @@ export default function FilesPage() {
   }, [currentPath, notify]);
 
   useEffect(() => {
+    // Listing the bucket is synchronising with an external system, which is what an
+    // effect is for; the lint rule cannot tell this apart from deriving state.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     refresh();
   }, [refresh]);
 

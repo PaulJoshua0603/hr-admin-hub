@@ -1,12 +1,6 @@
 "use client";
 
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useState,
-} from "react";
+import { createContext, useCallback, useContext, useSyncExternalStore } from "react";
 
 type Theme = "light" | "dark";
 
@@ -19,26 +13,46 @@ type ThemeContextValue = {
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 const STORAGE_KEY = "hr-admin-theme";
 
-export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>("light");
+/**
+ * The blocking script in the document head already puts the `dark` class on <html>
+ * before first paint, so the class itself is the source of truth. Reading it through
+ * useSyncExternalStore keeps the provider in step without an effect that would have to
+ * re-render everything a second time just to correct the theme.
+ */
+const listeners = new Set<() => void>();
 
-  useEffect(() => {
-    const stored = window.localStorage.getItem(STORAGE_KEY) as Theme | null;
-    const initial: Theme =
-      stored ||
-      (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
-    setThemeState(initial);
-  }, []);
+function subscribe(onChange: () => void) {
+  listeners.add(onChange);
+  return () => {
+    listeners.delete(onChange);
+  };
+}
+
+function getSnapshot(): Theme {
+  return document.documentElement.classList.contains("dark") ? "dark" : "light";
+}
+
+/** The server has no DOM to read; the head script corrects this before paint. */
+function getServerSnapshot(): Theme {
+  return "light";
+}
+
+export function ThemeProvider({ children }: { children: React.ReactNode }) {
+  const theme = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 
   const setTheme = useCallback((t: Theme) => {
-    setThemeState(t);
-    window.localStorage.setItem(STORAGE_KEY, t);
     document.documentElement.classList.toggle("dark", t === "dark");
+    try {
+      window.localStorage.setItem(STORAGE_KEY, t);
+    } catch {
+      // Private mode or blocked storage — the theme still applies for this session.
+    }
+    listeners.forEach((fn) => fn());
   }, []);
 
   const toggleTheme = useCallback(() => {
-    setTheme(theme === "dark" ? "light" : "dark");
-  }, [theme, setTheme]);
+    setTheme(document.documentElement.classList.contains("dark") ? "light" : "dark");
+  }, [setTheme]);
 
   return (
     <ThemeContext.Provider value={{ theme, toggleTheme, setTheme }}>

@@ -44,8 +44,10 @@
   --color-warn-soft: var(--warn-soft);
   --color-success: var(--success);
   --color-success-soft: var(--success-soft);
-  --font-display: Arial, Helvetica, sans-serif;
-  --font-sans: Arial, Helvetica, sans-serif;
+  /* System-native stack: no webfont request, so first paint never waits on the network
+     and the build stays hermetic. */
+  --font-display: ui-sans-serif, system-ui, -apple-system, "Segoe UI Variable Display", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 
 html {
@@ -284,5 +286,136 @@ h1, h2, h3, .font-display {
     animation: none !important;
     transition: none !important;
     transform: none !important;
+  }
+}
+
+/* ============================================================================
+   Design system baseline
+   Element-level defaults only. Tailwind utilities sit in a later cascade layer,
+   so anything a component sets explicitly still wins — these rules raise the
+   floor for every page without needing each one rewritten.
+   ============================================================================ */
+
+body {
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  line-height: 1.5;
+}
+
+h1, h2, h3, .font-display {
+  letter-spacing: -0.018em;
+  text-wrap: balance;
+}
+
+p, li {
+  text-wrap: pretty;
+}
+
+/* Figures, dates and money line up column-to-column instead of jittering. */
+th, td, input[type="date"], input[type="time"], input[type="number"], .tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------- Tables ---------------------------------- */
+
+table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+th {
+  vertical-align: middle;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+td {
+  vertical-align: middle;
+}
+
+/* Header stays put when a long table scrolls inside its own container. */
+thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--background);
+  box-shadow: inset 0 -1px 0 var(--border);
+}
+
+tbody tr {
+  transition: background-color 0.12s ease;
+}
+
+tbody tr:hover {
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
+}
+
+/* A control inside a cell shouldn't add row height beyond the row's own padding. */
+td > input,
+td > select {
+  margin: 0;
+}
+
+/* ------------------------------- Focus states ------------------------------- */
+
+a:focus-visible,
+button:focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Tailwind's ring utilities already draw focus on controls that opt in. */
+.focus-visible\:ring-2:focus-visible {
+  outline: none;
+}
+
+/* -------------------------------- Scrollbars -------------------------------- */
+
+.overflow-y-auto,
+.overflow-x-auto,
+.overflow-auto {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.overflow-y-auto::-webkit-scrollbar,
+.overflow-x-auto::-webkit-scrollbar,
+.overflow-auto::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.overflow-y-auto::-webkit-scrollbar-thumb,
+.overflow-x-auto::-webkit-scrollbar-thumb,
+.overflow-auto::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+}
+
+.overflow-y-auto::-webkit-scrollbar-thumb:hover,
+.overflow-x-auto::-webkit-scrollbar-thumb:hover,
+.overflow-auto::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-muted);
+  background-clip: content-box;
+}
+
+/* ------------------------------ Motion comfort ------------------------------ */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

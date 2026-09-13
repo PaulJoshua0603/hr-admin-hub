@@ -282,7 +282,50 @@ export type MilestoneNote = {
   note: string;
 };
 
+export type ER2ReportRow = {
+  id: string;
+  employeeName: string;
+  position: string;
+  department: string;
+  dateCreated: string;
+};
+
+export type RegularizationReportRow = {
+  id: string;
+  employeeName: string;
+  position: string;
+  department: string;
+  dateOfRegularization: string;
+  dateCreated: string;
+};
+
+export type EventReportRow = {
+  id: string;
+  eventName: string;
+  date: string;
+  /** Start time — still called `time` because rows were saved under that name before end times existed. */
+  time: string;
+  endTime?: string;
+  location: string;
+};
+
+export type PlanReportRow = {
+  id: string;
+  plan: string;
+  startDate: string;
+  endDate: string;
+};
+
+export type CustomReportTable = {
+  id: string;
+  title: string;
+  columns: string[];
+  rows: Record<string, string>[];
+};
+
 export type COECategory = "withPurpose" | "endOfEmployment";
+
+
 
 export type COERequest = {
   id: string;
@@ -290,6 +333,8 @@ export type COERequest = {
   employeeName: string;
   position: string;
   department: string;
+  /** Falls back to the employee record's email when this is empty. */
+  email?: string;
   purpose: string;
   dateRequested: string; // ISO date
   dateGiven?: string; // ISO date
@@ -404,12 +449,43 @@ export function emptyRequirements(): Record<RequirementKey, RequirementStatus> {
 
 // Requirements considered "critical" for onboarding readiness.
 export function getLackingRequirements(e: Employee): string[] {
-  return (Object.keys(e.requirements) as RequirementKey[])
-    .filter((k) => e.requirements[k] !== "complete")
-    .map((k) => {
-      const note = e.requirementNotes?.[k]?.trim();
-      return note ? `${REQUIREMENT_LABELS[k]} (${note})` : REQUIREMENT_LABELS[k];
-    });
+  const missing: string[] = [];
+
+  // Employee Details
+  if (!e.birthday) missing.push("Birthday");
+  if (!e.dateHired) missing.push("Hired/Onboarding Date");
+
+  // Compensation
+  if (!e.basicSalary) missing.push("Basic Salary");
+  if (!e.totalMonthlyGrossCompensation) missing.push("Total Monthly Gross Compensation Income");
+
+  // Identification & Profile
+  if (!e.companyIdNumber) missing.push("ID Number");
+  if (!e.biometricsNo) missing.push("Biometrics No.");
+  if (!e.philhealthNo) missing.push("PhilHealth No.");
+  if (!e.realcognitaEmail) missing.push("Realcognita Issued Email");
+  if (!e.homeAddress) missing.push("Home Address");
+
+  // Pre-Employment Requirements checklist
+  const checklist = e.preEmploymentChecklist || emptyPreEmploymentChecklist();
+  (Object.keys(PRE_EMPLOYMENT_CHECKLIST_LABELS) as PreEmploymentChecklistKey[]).forEach((k) => {
+    if (!checklist[k]) missing.push(PRE_EMPLOYMENT_CHECKLIST_LABELS[k]);
+  });
+
+  // Pre-Employment Medical Exam
+  const medical = e.medicalExamChecklist || emptyMedicalExamChecklist();
+  const missingMedical = (Object.keys(MEDICAL_EXAM_CHECKLIST_LABELS) as MedicalExamChecklistKey[]).filter(
+    (k) => !medical[k]
+  );
+  if (missingMedical.length > 0) {
+    missing.push(
+      `Pre-Employment Medical Exam (Original Copies): ${missingMedical
+        .map((k) => MEDICAL_EXAM_CHECKLIST_LABELS[k])
+        .join(", ")}`
+    );
+  }
+
+  return missing;
 }
 
 export type EmploymentMilestoneKey = "thirdMonth" | "sixthMonth" | "oneYear";
@@ -440,12 +516,94 @@ export const EMPLOYMENT_MILESTONE_REMINDER_OFFSETS: Record<
 };
 
 export function getMissingCriticalItems(e: Employee): string[] {
-  const checklist = e.preEmploymentChecklist || emptyPreEmploymentChecklist();
-  const missing: string[] = [];
-  if (!checklist.sssId || !checklist.tinId || !checklist.philhealthId || !checklist.pagibigId) {
-    missing.push("Government IDs");
-  }
-  if (!checklist.nbi) missing.push("NBI");
-  if (e.requirements.preEmploymentMedical !== "complete") missing.push("Medical Exam");
-  return missing;
+  return getLackingRequirements(e);
 }
+
+/* ------------------------------ ER2 PhilHealth form ------------------------------ */
+
+export type ER2ListType = "initial" | "subsequent";
+
+/** Employer header block of the ER2 sheet. Saved once and reused across forms. */
+export type ER2Employer = {
+  firmName: string;
+  employerNo: string;
+  address: string;
+  email: string;
+  listType: ER2ListType;
+};
+
+/** One employee line on the ER2 sheet. */
+export type ER2Entry = {
+  id: string;
+  /** Employee this line was prefilled from, when it came from the employee list. */
+  employeeId?: string;
+  philhealthNo: string;
+  name: string;
+  position: string;
+  salary: string;
+  dateOfEmployment: string;
+  previousEmployer: string;
+};
+
+export type ER2SingleField =
+  | "firmName"
+  | "employerNo"
+  | "address"
+  | "email"
+  | "initialBox"
+  | "subsequentBox"
+  | "totalListed"
+  | "pageNo"
+  | "sheets"
+  | "signature";
+
+export type ER2Column =
+  | "philhealthNo"
+  | "name"
+  | "position"
+  | "salary"
+  | "dateOfEmployment"
+  | "previousEmployer";
+
+/**
+ * Where each value sits on the uploaded template, as a fraction of page width/height
+ * (0,0 = top-left). Fractions rather than points so the same calibration holds for any
+ * page size, and so a template scanned at a different resolution still lines up.
+ */
+export type ER2Layout = {
+  fields: Record<ER2SingleField, { x: number; y: number }>;
+  table: {
+    firstRowY: number;
+    rowHeight: number;
+    maxRows: number;
+    columns: Record<ER2Column, number>;
+  };
+  fontSize: number;
+};
+
+export type ER2Form = {
+  id: string;
+  title: string;
+  coverageStart: string;
+  coverageEnd: string;
+  employer: ER2Employer;
+  entries: ER2Entry[];
+  pageNo: string;
+  sheets: string;
+  signature: string;
+  /** Per-form calibration; falls back to the default layout when unset. */
+  layout?: ER2Layout;
+  updatedAt: string;
+};
+
+/** The uploaded blank ER2 template, held as a data URL so it works with or without Supabase. */
+export type ER2Template = {
+  id: string;
+  fileName: string;
+  dataUrl: string;
+  uploadedAt: string;
+  /** /Rotate on page 1. A landscape ER2 is often a portrait page rotated 90. */
+  pageRotation?: number;
+  /** Fillable AcroForm fields found on the template, if any. */
+  fieldCount?: number;
+};

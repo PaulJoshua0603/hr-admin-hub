@@ -2,6 +2,7 @@
 
 import { use, useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { v4 as uuid } from "uuid";
 import { useSupabaseStore } from "@/lib/useSupabaseStore";
 import { useNotifications } from "@/lib/notificationContext";
@@ -105,7 +106,11 @@ export default function EmployeeDetailPage({
   const [checklistEditing, setChecklistEditing] = useState(false);
   const [newItemLabels, setNewItemLabels] = useState<Record<string, string>>({});
   const [coeFiles, setCoeFiles] = useState<{ name: string; updated_at?: string | null }[]>([]);
-  const [purposeForm, setPurposeForm] = useState({ purpose: "", dateRequested: todayISO().slice(0, 10) });
+  const [purposeForm, setPurposeForm] = useState({
+    purpose: "",
+    dateRequested: todayISO().slice(0, 10),
+    dateIssued: "",
+  });
   const [resignedForm, setResignedForm] = useState({
     dateRequested: todayISO().slice(0, 10),
     separationDate: "",
@@ -114,11 +119,15 @@ export default function EmployeeDetailPage({
   const [dragOverItemId, setDragOverItemId] = useState<string | null>(null);
   const [newCategoryTitle, setNewCategoryTitle] = useState("");
   const { notify } = useNotifications();
+  const router = useRouter();
 
-  // useState initial values above only run once, before hydration finishes,
-  // so re-sync the inputs once the employee record has actually loaded.
-  useEffect(() => {
-    if (!hydrated || !employee) return;
+  // The useState initial values above run once, before the record has loaded, so the
+  // date inputs are re-seeded when a different employee's record arrives. Adjusting
+  // state during render (rather than in an effect) means the inputs are already correct
+  // on the first paint instead of flashing empty and being corrected afterwards.
+  const [seededFor, setSeededFor] = useState<string | null>(null);
+  if (hydrated && employee && seededFor !== employee.id) {
+    setSeededFor(employee.id);
     setBirthdayInput(employee.birthday ? employee.birthday.slice(0, 10) : "");
     setHireDateInput(employee.dateHired ? employee.dateHired.slice(0, 10) : "");
     setLastDayInput(employee.lastDay ? employee.lastDay.slice(0, 10) : "");
@@ -127,11 +136,10 @@ export default function EmployeeDetailPage({
       employee.dateRequirementsSent
         ? employee.dateRequirementsSent.slice(0, 10)
         : employee.dateAdded
-        ? employee.dateAdded.slice(0, 10)
-        : ""
+          ? employee.dateAdded.slice(0, 10)
+          : ""
     );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hydrated, employee?.id]);
+  }
 
   // Auto-manage "Regular employee": auto-check once the 6th month milestone is
   // reached (unless resigned), and auto-uncheck as soon as the employee resigns.
@@ -157,8 +165,11 @@ export default function EmployeeDetailPage({
 
   useEffect(() => {
     if (!hydrated || !employee) return;
+    // Fetching this employee's stored COE files — synchronising with an external system,
+    // which is what an effect is for. The lint rule can't tell that apart from deriving
+    // state from props, so it's suppressed here rather than the code contorted.
+    // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect
     refreshCoeFiles();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hydrated, employee?.id]);
 
   async function generateCOEWithPurpose() {
@@ -169,12 +180,14 @@ export default function EmployeeDetailPage({
       employeeName: employee!.name,
       position: employee!.position || "",
       department: employee!.department || "",
+      email: employee!.realcognitaEmail || "",
       purpose: purposeForm.purpose.trim(),
       dateRequested: new Date(purposeForm.dateRequested).toISOString(),
+      dateGiven: purposeForm.dateIssued ? new Date(purposeForm.dateIssued).toISOString() : undefined,
     });
     await exportCOEWithPurposeDocx(employee!.name, purposeForm.purpose.trim(), employee!);
     notify(`COE with Purpose generated for "${employee!.name}"`, "created");
-    setPurposeForm({ purpose: "", dateRequested: todayISO().slice(0, 10) });
+    setPurposeForm({ purpose: "", dateRequested: todayISO().slice(0, 10), dateIssued: "" });
     refreshCoeFiles();
   }
 
@@ -192,6 +205,7 @@ export default function EmployeeDetailPage({
       employeeName: employee!.name,
       position: employee!.position || "",
       department: employee!.department || "",
+      email: employee!.realcognitaEmail || "",
       purpose: "",
       dateRequested: new Date(resignedForm.dateRequested).toISOString(),
     });
@@ -518,7 +532,8 @@ export default function EmployeeDetailPage({
                 if (!window.confirm(`Delete ${employee.name}? This cannot be undone.`)) return;
                 notify(`Employee removed: "${employee.name}"`, "deleted");
                 remove(employee.id);
-                window.location.href = "/employees";
+                // Client-side navigation keeps the app shell mounted instead of a full reload.
+                router.push("/employees");
               }}
             >
               Delete employee
@@ -928,9 +943,10 @@ export default function EmployeeDetailPage({
                   value={purposeForm.purpose}
                   disabled={!isEditing}
                   onChange={(e) => setPurposeForm((f) => ({ ...f, purpose: e.target.value }))}
-                  className="sm:col-span-2"
+                  className="sm:col-span-3"
                 />
-                <div className="flex flex-col gap-1">
+                <label className="flex flex-col gap-1 text-xs text-ink-muted">
+                  Date requested
                   <Input
                     type="date"
                     value={purposeForm.dateRequested}
@@ -942,7 +958,21 @@ export default function EmployeeDetailPage({
                       {formatDate(new Date(purposeForm.dateRequested).toISOString(), "MMMM d, yyyy")}
                     </span>
                   )}
-                </div>
+                </label>
+                <label className="flex flex-col gap-1 text-xs text-ink-muted">
+                  Date issued
+                  <Input
+                    type="date"
+                    value={purposeForm.dateIssued}
+                    disabled={!isEditing}
+                    onChange={(e) => setPurposeForm((f) => ({ ...f, dateIssued: e.target.value }))}
+                  />
+                  {purposeForm.dateIssued && (
+                    <span className="text-[11px] text-ink-muted">
+                      {formatDate(new Date(purposeForm.dateIssued).toISOString(), "MMMM d, yyyy")}
+                    </span>
+                  )}
+                </label>
               </div>
               <Button
                 className="mt-2"
@@ -1240,7 +1270,9 @@ function EmployeeCOERequestsList({
   }
   const sorted = [...requests].sort((a, b) => (a.dateRequested < b.dateRequested ? 1 : -1));
   return (
-    <div className="mt-3 overflow-x-auto rounded-lg border border-border">
+    <>
+    <p className="mt-3 text-sm font-medium text-ink">Total COE Requests: {requests.length}</p>
+    <div className="mt-2 overflow-x-auto rounded-lg border border-border">
       <table className="w-full min-w-[600px] text-left text-sm">
         <thead>
           <tr className="bg-background text-xs uppercase tracking-wide text-ink-muted">
@@ -1296,5 +1328,6 @@ function EmployeeCOERequestsList({
         </tbody>
       </table>
     </div>
+    </>
   );
 }

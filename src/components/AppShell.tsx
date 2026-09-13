@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import Image from "next/image";
 import NotificationBell from "@/components/NotificationBell";
 import ProfileCard from "@/components/ProfileCard";
@@ -20,16 +20,42 @@ import {
   TasksIcon,
 } from "@/components/icons";
 
+/**
+ * Ticking wall clock. The time is an external source rather than React state, so it is
+ * read through useSyncExternalStore — the server renders nothing and the first client
+ * paint already has the real time.
+ */
+const clockListeners = new Set<() => void>();
+let clockTimer: ReturnType<typeof setInterval> | null = null;
+let clockNow = 0;
+
+function subscribeToClock(onChange: () => void) {
+  clockListeners.add(onChange);
+  if (!clockTimer) {
+    clockTimer = setInterval(() => {
+      clockNow = Date.now();
+      clockListeners.forEach((fn) => fn());
+    }, 1000);
+  }
+  return () => {
+    clockListeners.delete(onChange);
+    if (clockListeners.size === 0 && clockTimer) {
+      clearInterval(clockTimer);
+      clockTimer = null;
+    }
+  };
+}
+
+function getClockSnapshot() {
+  if (!clockNow) clockNow = Date.now();
+  return clockNow;
+}
+
 function HeaderClock() {
-  const [now, setNow] = useState<Date | null>(null);
+  const timestamp = useSyncExternalStore(subscribeToClock, getClockSnapshot, () => 0);
 
-  useEffect(() => {
-    setNow(new Date());
-    const id = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(id);
-  }, []);
-
-  if (!now) return null;
+  if (!timestamp) return null;
+  const now = new Date(timestamp);
 
   const weekdayStr = now.toLocaleDateString(undefined, { weekday: "long" });
   const dateStr = now.toLocaleDateString(undefined, {
