@@ -359,7 +359,7 @@ export const DEFAULT_NOTES_TASK_LIST_ITEMS: string[] = [
   "Print Job Offer",
   "Print BDO Reference Sheet",
   "Print BDO Endorsement Letter",
-  "Attach BDO signing notes (Name, Position, Department, New/Replacement)",
+  "Attach BDO signing notes (Name, Position, Department, Supervisor, New/Replacement)",
   "Prepare desk supplies (Black & Red Ballpens, Notebook, Correction Tape, Bottled Water)",
   "Issue Visitor Pass",
   "Collect 2x2 and 1x1 pictures",
@@ -425,6 +425,10 @@ export type Employee = {
   basicGrossSalary?: string;
   // Identification & profile
   philhealthNo?: string;
+  /** Captured on import so forms needing "SURNAME, FIRST MIDDLE" can rebuild it. */
+  firstName?: string;
+  middleName?: string;
+  lastName?: string;
   companyIdNumber?: string;
   biometricsNo?: string;
   realcognitaEmail?: string;
@@ -521,17 +525,6 @@ export function getMissingCriticalItems(e: Employee): string[] {
 
 /* ------------------------------ ER2 PhilHealth form ------------------------------ */
 
-export type ER2ListType = "initial" | "subsequent";
-
-/** Employer header block of the ER2 sheet. Saved once and reused across forms. */
-export type ER2Employer = {
-  firmName: string;
-  employerNo: string;
-  address: string;
-  email: string;
-  listType: ER2ListType;
-};
-
 /** One employee line on the ER2 sheet. */
 export type ER2Entry = {
   id: string;
@@ -542,28 +535,22 @@ export type ER2Entry = {
   position: string;
   salary: string;
   dateOfEmployment: string;
-  previousEmployer: string;
 };
 
-export type ER2SingleField =
-  | "firmName"
-  | "employerNo"
-  | "address"
-  | "email"
-  | "initialBox"
-  | "subsequentBox"
-  | "totalListed"
-  | "pageNo"
-  | "sheets"
-  | "signature";
+/**
+ * The only single-value fields this app writes. The employer block, the list-type
+ * checkbox and the signature line are already printed on the uploaded template, so
+ * stamping them again would print over what is there.
+ */
+export type ER2SingleField = "totalListed" | "pageNo" | "sheets";
 
+/** Previous Employer is on the sheet but is not one of the fields we fill in. */
 export type ER2Column =
   | "philhealthNo"
   | "name"
   | "position"
   | "salary"
-  | "dateOfEmployment"
-  | "previousEmployer";
+  | "dateOfEmployment";
 
 /**
  * Where each value sits on the uploaded template, as a fraction of page width/height
@@ -586,11 +573,9 @@ export type ER2Form = {
   title: string;
   coverageStart: string;
   coverageEnd: string;
-  employer: ER2Employer;
   entries: ER2Entry[];
   pageNo: string;
   sheets: string;
-  signature: string;
   /** Per-form calibration; falls back to the default layout when unset. */
   layout?: ER2Layout;
   updatedAt: string;

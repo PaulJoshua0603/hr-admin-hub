@@ -1,4 +1,4 @@
-import { forwardRef } from "react";
+import { forwardRef, useState } from "react";
 
 /**
  * Shared control metrics. Buttons, inputs, selects and the pill select all resolve to
@@ -8,6 +8,9 @@ import { forwardRef } from "react";
 const CONTROL = "h-9 rounded-lg text-sm";
 const FOCUS_RING =
   "outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-1 focus-visible:ring-offset-surface";
+export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
+export type ButtonSize = "sm" | "md";
+
 const FIELD_BASE = `${CONTROL} w-full border border-border bg-surface px-3 text-ink transition-[border-color,box-shadow] duration-150 placeholder:text-ink-muted/70 hover:border-ink-muted/40 focus:border-accent focus:ring-2 focus:ring-accent/15 disabled:cursor-not-allowed disabled:opacity-60`;
 
 export function Card({
@@ -37,20 +40,85 @@ export function SectionHeading({
   title,
   subtitle,
   action,
+  toolbar,
 }: {
   title: string;
   subtitle?: string;
+  /** One or two controls that belong beside the title. */
   action?: React.ReactNode;
+  /** A page's full set of tools, given its own row so it never squeezes the title. */
+  toolbar?: React.ReactNode;
 }) {
   return (
-    <div className="mb-6 flex flex-col gap-3 border-b border-border pb-4 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
-      <div className="min-w-0">
-        <h1 className="font-display text-2xl tracking-tight text-ink">{title}</h1>
-        {subtitle && <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-ink-muted">{subtitle}</p>}
+    <div className="mb-6 border-b border-border pb-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
+        {/* min-w-0 lets the text shrink gracefully; the action group may shrink too, so a
+            long row of buttons can no longer squeeze the subtitle into a narrow column. */}
+        <div className="min-w-0 sm:flex-1">
+          <h1 className="font-display text-2xl tracking-tight text-ink">{title}</h1>
+          {subtitle && (
+            <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-ink-muted">{subtitle}</p>
+          )}
+        </div>
+        {action && <div className="flex flex-wrap items-center gap-2 sm:justify-end">{action}</div>}
       </div>
-      {action && <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">{action}</div>}
+      {toolbar && <div className="mt-4 flex flex-wrap items-center gap-2">{toolbar}</div>}
     </div>
   );
+}
+
+/**
+ * A report section that stays shut until it is asked for. The Reports page carries a
+ * dozen of these, and rendering every table at once buries whichever one is actually
+ * wanted; the heading alone tells you how many records are inside.
+ */
+export function CollapsibleSection({
+  title,
+  subtitle,
+  count,
+  defaultOpen = false,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  count?: number;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <Card>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className={`flex w-full items-center gap-3 text-left ${FOCUS_RING} rounded-lg`}
+      >
+        <span
+          aria-hidden
+          className={`text-ink-muted transition-transform duration-150 ${open ? "rotate-90" : ""}`}
+        >
+          ▸
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="font-display text-lg text-ink">{title}</span>
+          {typeof count === "number" && (
+            <span className="ml-2 rounded-full border border-border px-2 py-0.5 text-xs tabular-nums text-ink-muted">
+              {count}
+            </span>
+          )}
+          {subtitle && <span className="mt-1 block text-xs text-ink-muted">{subtitle}</span>}
+        </span>
+        <span className="shrink-0 text-xs text-ink-muted">{open ? "Hide" : "View"}</span>
+      </button>
+      {open && <div className="mt-4">{children}</div>}
+    </Card>
+  );
+}
+
+/** Divider between groups of tools in a toolbar row. */
+export function ToolbarDivider() {
+  return <span aria-hidden className="mx-1 hidden h-6 w-px bg-border sm:block" />;
 }
 
 export function Button({
@@ -60,9 +128,27 @@ export function Button({
   className = "",
   ...props
 }: React.ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: "primary" | "secondary" | "ghost" | "danger";
-  size?: "sm" | "md";
+  variant?: ButtonVariant;
+  size?: ButtonSize;
 }) {
+  return (
+    <button
+      type="button"
+      {...props}
+      className={`${buttonClasses(variant, size)} ${className}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
+ * Every control that should read as a button resolves its look here. Uploads have to be
+ * a <label> wrapping a hidden <input type="file">, and hand-copying these classes is how
+ * "Import from Excel" and "Update Email/Supervisor" drifted into two different sizes and
+ * colours next to the real buttons.
+ */
+export function buttonClasses(variant: ButtonVariant = "primary", size: ButtonSize = "md"): string {
   const variants = {
     primary:
       "bg-accent text-white shadow-sm shadow-accent/25 hover:brightness-110 active:brightness-95",
@@ -71,20 +157,43 @@ export function Button({
     ghost: "border border-border bg-transparent text-ink-muted hover:bg-background hover:text-ink",
     danger: "border border-transparent bg-transparent text-warn hover:bg-warn-soft",
   }[variant];
+  const sizes = { sm: "h-8 px-2.5 text-xs", md: "h-9 px-3.5 text-sm" }[size];
+  return `press-scale inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg font-medium transition-all duration-150 disabled:pointer-events-none disabled:opacity-50 ${FOCUS_RING} ${sizes} ${variants}`;
+}
 
-  const sizes = {
-    sm: "h-8 px-2.5 text-xs",
-    md: "h-9 px-3.5 text-sm",
-  }[size];
-
+/** A file picker that looks and sizes exactly like a Button. */
+export function FileButton({
+  children,
+  accept,
+  disabled = false,
+  onFile,
+  variant = "secondary",
+  title,
+}: {
+  children: React.ReactNode;
+  accept?: string;
+  disabled?: boolean;
+  onFile: (file: File) => void;
+  variant?: ButtonVariant;
+  title?: string;
+}) {
   return (
-    <button
-      type="button"
-      {...props}
-      className={`press-scale inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg font-medium transition-all duration-150 disabled:pointer-events-none disabled:opacity-50 ${FOCUS_RING} ${sizes} ${variants} ${className}`}
-    >
-      {children}
-    </button>
+    <label title={title} className={disabled ? "cursor-not-allowed" : "cursor-pointer"}>
+      <span className={`${buttonClasses(variant)} ${disabled ? "pointer-events-none opacity-50" : ""}`}>
+        {children}
+      </span>
+      <input
+        type="file"
+        accept={accept}
+        className="hidden"
+        disabled={disabled}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) onFile(file);
+          e.target.value = "";
+        }}
+      />
+    </label>
   );
 }
 

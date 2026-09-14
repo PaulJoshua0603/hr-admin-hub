@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Local data snapshots — contain employee records, never commit
+hr_employees-backup.json

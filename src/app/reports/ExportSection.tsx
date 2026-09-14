@@ -4,7 +4,7 @@ import { useState } from "react";
 import { format } from "date-fns";
 import { useSupabaseStore } from "@/lib/useSupabaseStore";
 import { Button, Card, Input } from "@/components/ui";
-import { formatDate, formatTime12 } from "@/lib/dates";
+import { formatDate, formatTime24 } from "@/lib/dates";
 import { inRange, rangeFor, type RangePreset } from "@/lib/dateRanges";
 import { useNotifications } from "@/lib/notificationContext";
 import { SIXTH_MONTH_NOTE_REFERENCE } from "@/lib/milestoneNotes";
@@ -245,15 +245,7 @@ export function ReportExportSection() {
           const head = s.addRow([formRecord.title]);
           head.getCell(1).font = { bold: true, color: { argb: "FF0A2E2A" } };
           head.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE4F0EE" } };
-          s.addRow(["Name of Employer/Firm", formRecord.employer.firmName]);
-          s.addRow(["Employer No.", formRecord.employer.employerNo]);
-          s.addRow(["Address", formRecord.employer.address]);
-          s.addRow(["E-mail Address", formRecord.employer.email]);
-          s.addRow([
-            "List type",
-            formRecord.employer.listType === "initial" ? "Initial List" : "Subsequent List",
-          ]);
-          s.addRow(["Signature over printed name", formRecord.signature]);
+          s.addRow(["Coverage", `${formRecord.coverageStart} to ${formRecord.coverageEnd}`]);
           s.addRow([]);
           const h = s.addRow([
             "PhilHealth SSS/GSIS Number",
@@ -261,7 +253,6 @@ export function ReportExportSection() {
             "Position",
             "Salary",
             "Date of Employment",
-            "Previous Employer",
           ]);
           h.eachCell((c) => {
             c.font = { bold: true, color: { argb: "FFFFFFFF" } };
@@ -274,7 +265,6 @@ export function ReportExportSection() {
               entry.position,
               entry.salary,
               entry.dateOfEmployment,
-              entry.previousEmployer,
             ])
           );
           s.addRow([]);
@@ -341,8 +331,8 @@ export function ReportExportSection() {
           s.addRow([
             r.eventName,
             formatDate(r.date, "MMMM d, yyyy"),
-            formatTime12(r.time),
-            formatTime12(r.endTime || ""),
+            formatTime24(r.time),
+            formatTime24(r.endTime || ""),
             r.location,
           ])
         );

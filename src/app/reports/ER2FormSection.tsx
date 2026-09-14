@@ -3,10 +3,9 @@
 import { useRef, useState } from "react";
 import { v4 as uuid } from "uuid";
 import { useSupabaseStore } from "@/lib/useSupabaseStore";
-import { Button, Card, Input } from "@/components/ui";
+import { Button, CollapsibleSection, Input } from "@/components/ui";
 import { PdfPagePreview } from "@/components/PdfPagePreview";
 import { formatDate, todayISO } from "@/lib/dates";
-import { inRange, rangeFor } from "@/lib/dateRanges";
 import {
   ER2_COLUMN_LABELS,
   ER2_COLUMN_ORDER,
@@ -15,38 +14,24 @@ import {
   cloneLayout,
   layoutOrDefault,
 } from "@/lib/er2Layout";
-import { buildCompletedER2, dataUrlToBytes, downloadPdf, pageCount } from "@/lib/er2Pdf";
+import {
+  buildCompletedER2,
+  dataUrlToBytes,
+  downloadPdf,
+  listedCount,
+  pageCount,
+} from "@/lib/er2Pdf";
+import { er2EntryFromEmployee, findEmployeeByName } from "@/lib/er2Fields";
+import { EmployeeNameInput } from "@/components/EmployeeNameInput";
 import { useNotifications } from "@/lib/notificationContext";
-import type {
-  ER2Entry,
-  ER2Form,
-  ER2ReportRow,
-  ER2SingleField,
-  ER2Template,
-  Employee,
-} from "@/types";
+import type { ER2Entry, ER2Form, ER2SingleField, ER2Template, Employee } from "@/types";
 
 const TEMPLATE_KEY = "hr_er2_template";
 const FORMS_KEY = "hr_er2_forms";
 const TEMPLATE_ID = "template";
 const MAX_TEMPLATE_BYTES = 8 * 1024 * 1024;
 
-const SINGLE_FIELDS: ER2SingleField[] = [
-  "firmName",
-  "employerNo",
-  "address",
-  "email",
-  "initialBox",
-  "subsequentBox",
-  "totalListed",
-  "pageNo",
-  "sheets",
-  "signature",
-];
-
-function emptyEmployer(): ER2Form["employer"] {
-  return { firmName: "", employerNo: "", address: "", email: "", listType: "subsequent" };
-}
+const SINGLE_FIELDS: ER2SingleField[] = ["totalListed", "pageNo", "sheets"];
 
 function readAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -64,17 +49,12 @@ export function ER2FormSection() {
   );
   const { items: forms, add: addForm, update: updateForm, remove: removeForm } =
     useSupabaseStore<ER2Form>(FORMS_KEY, []);
-  const { items: er2Rows } = useSupabaseStore<ER2ReportRow>("hr_report_er2", []);
   const { items: employees } = useSupabaseStore<Employee>("hr_employees", []);
   const { notify } = useNotifications();
 
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [uploading, setUploading] = useState(false);
   const [openFormId, setOpenFormId] = useState<string | null>(null);
-
-  const monthRange = rangeFor("month", new Date());
-  const [coverageStart, setCoverageStart] = useState(monthRange.start);
-  const [coverageEnd, setCoverageEnd] = useState(monthRange.end);
 
   const template = templates.find((t) => t.id === TEMPLATE_ID) || templates[0];
 
@@ -121,55 +101,25 @@ export function ER2FormSection() {
     }
   }
 
-  /** Builds the employee lines from the ER2 report rows inside the chosen coverage. */
-  function entriesForCoverage(): ER2Entry[] {
-    return er2Rows
-      .filter((r) => inRange(r.dateCreated, coverageStart, coverageEnd))
-      .map((r) => {
-        const emp = employees.find(
-          (e) => e.name.trim().toLowerCase() === r.employeeName.trim().toLowerCase()
-        );
-        return {
-          id: uuid(),
-          employeeId: emp?.id,
-          philhealthNo: emp?.philhealthNo || "",
-          name: r.employeeName,
-          position: r.position || emp?.position || "",
-          salary: emp?.basicSalary || "",
-          dateOfEmployment: emp?.dateHired ? formatDate(emp.dateHired, "MMMM d, yyyy") : "",
-          previousEmployer: "",
-        };
-      });
-  }
-
   function createForm() {
-    const entries = entriesForCoverage();
     const previous = forms[0];
+    const today = todayISO();
     const form: ER2Form = {
       id: uuid(),
-      title: `ER2 — ${formatDate(new Date(coverageStart).toISOString(), "MMMM d")}–${formatDate(
-        new Date(coverageEnd).toISOString(),
-        "MMMM d, yyyy"
-      )}`,
-      coverageStart,
-      coverageEnd,
-      // Employer details carry over from the last form so they're typed once.
-      employer: previous ? { ...previous.employer } : emptyEmployer(),
-      entries,
-      pageNo: "",
-      sheets: "",
-      signature: previous?.signature || "",
+      title: `ER2 Form — ${formatDate(today, "MMMM d, yyyy")}`,
+      // Kept on the record but not shown: the Reports export uses these to decide which
+      // saved forms fall inside the coverage being exported.
+      coverageStart: today.slice(0, 10),
+      coverageEnd: today.slice(0, 10),
+      entries: [],
+      pageNo: "1",
+      sheets: "1",
       layout: previous?.layout ? cloneLayout(previous.layout) : undefined,
       updatedAt: todayISO(),
     };
     addForm(form);
     setOpenFormId(form.id);
-    notify(
-      entries.length > 0
-        ? `ER2 form created with ${entries.length} employee${entries.length === 1 ? "" : "s"}`
-        : "ER2 form created — no ER2 rows in that coverage, add lines manually",
-      "created"
-    );
+    notify("ER2 form created — add employees with the name picker", "created");
   }
 
   if (!hydrated) return null;
@@ -177,8 +127,7 @@ export function ER2FormSection() {
   const openForm = forms.find((f) => f.id === openFormId);
 
   return (
-    <Card>
-      <h2 className="font-display text-lg text-ink">ER2 Form (PhilHealth template)</h2>
+    <CollapsibleSection title="ER2 Form (PhilHealth Template)" count={forms.length}>
       <p className="mt-1 text-xs text-ink-muted">
         Upload the blank ER2 PDF once, then fill it in here. Downloads are your uploaded sheet with the
         details drawn onto it, so the layout stays exactly as PhilHealth issued it.
@@ -222,15 +171,7 @@ export function ER2FormSection() {
       </div>
 
       {/* ---------------------------- New form ---------------------------- */}
-      <div className="mt-3 flex flex-wrap items-end gap-3">
-        <label className="flex flex-col gap-1 text-[11px] text-ink-muted">
-          Coverage start
-          <Input type="date" value={coverageStart} onChange={(e) => setCoverageStart(e.target.value)} />
-        </label>
-        <label className="flex flex-col gap-1 text-[11px] text-ink-muted">
-          Coverage end
-          <Input type="date" value={coverageEnd} onChange={(e) => setCoverageEnd(e.target.value)} />
-        </label>
+      <div className="mt-3 flex flex-wrap items-center gap-3">
         <Button onClick={createForm} disabled={!template}>
           + New ER2 form
         </Button>
@@ -286,11 +227,12 @@ export function ER2FormSection() {
           key={openForm.id}
           form={openForm}
           template={template}
+          employees={employees}
           onChange={(patch) => updateForm(openForm.id, { ...patch, updatedAt: todayISO() })}
           notify={notify}
         />
       )}
-    </Card>
+    </CollapsibleSection>
   );
 }
 
@@ -299,26 +241,12 @@ export function ER2FormSection() {
 /** The value that prints in each single-position field. */
 function valueForField(form: ER2Form, key: ER2SingleField, sheets: number): string {
   switch (key) {
-    case "firmName":
-      return form.employer.firmName;
-    case "employerNo":
-      return form.employer.employerNo;
-    case "address":
-      return form.employer.address;
-    case "email":
-      return form.employer.email;
-    case "initialBox":
-      return form.employer.listType === "initial" ? "X" : "";
-    case "subsequentBox":
-      return form.employer.listType === "subsequent" ? "X" : "";
     case "totalListed":
       return String(form.entries.length);
     case "pageNo":
       return form.pageNo || "1";
     case "sheets":
       return form.sheets || String(sheets);
-    case "signature":
-      return form.signature;
   }
 }
 
@@ -326,11 +254,9 @@ function valueForField(form: ER2Form, key: ER2SingleField, sheets: number): stri
 function editableSnapshot(form: ER2Form): string {
   return JSON.stringify({
     title: form.title,
-    employer: form.employer,
     entries: form.entries,
     pageNo: form.pageNo,
     sheets: form.sheets,
-    signature: form.signature,
     layout: form.layout,
   });
 }
@@ -338,17 +264,22 @@ function editableSnapshot(form: ER2Form): string {
 function ER2FormEditor({
   form,
   template,
+  employees,
   onChange,
   notify,
 }: {
   form: ER2Form;
   template: ER2Template;
+  employees: Employee[];
   onChange: (patch: Partial<ER2Form>) => void;
   notify: (message: string, kind?: "created" | "updated" | "deleted" | "warn") => void;
 }) {
   const [tab, setTab] = useState<"details" | "align">("details");
   const [downloading, setDownloading] = useState(false);
   const [dragging, setDragging] = useState<string | null>(null);
+  const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
+  // Snapshot taken when a row enters edit mode, so Cancel can put it back.
+  const [entryBeforeEdit, setEntryBeforeEdit] = useState<ER2Entry | null>(null);
   const previewRef = useRef<HTMLDivElement | null>(null);
 
   // Edits are held locally and written once on Save. Typing straight through to the
@@ -363,19 +294,13 @@ function ER2FormEditor({
 
   function save() {
     onChange({
-      employer: draft.employer,
       entries: draft.entries,
       pageNo: draft.pageNo,
       sheets: draft.sheets,
-      signature: draft.signature,
       layout: draft.layout,
       title: draft.title,
     });
     notify(`ER2 form "${draft.title}" saved`, "updated");
-  }
-
-  function setEmployer(patch: Partial<ER2Form["employer"]>) {
-    setDraft((d) => ({ ...d, employer: { ...d.employer, ...patch } }));
   }
 
   function setEntry(id: string, patch: Partial<ER2Entry>) {
@@ -386,21 +311,79 @@ function ER2FormEditor({
   }
 
   function addBlankEntry() {
+    const id = uuid();
     setDraft((d) => ({
       ...d,
       entries: [
         ...d.entries,
         {
-          id: uuid(),
+          id,
           philhealthNo: "",
           name: "",
           position: "",
           salary: "",
           dateOfEmployment: "",
-          previousEmployer: "",
         },
       ],
     }));
+    setEntryBeforeEdit(null);
+    setEditingEntryId(id);
+  }
+
+  /** Copies an employee record onto a line, every field already formatted. */
+  function applyEmployee(id: string, emp: Employee) {
+    const filled = er2EntryFromEmployee(emp, id);
+    setEntry(id, {
+      employeeId: filled.employeeId,
+      philhealthNo: filled.philhealthNo,
+      name: filled.name,
+      position: filled.position,
+      salary: filled.salary,
+      dateOfEmployment: filled.dateOfEmployment,
+    });
+  }
+
+  /**
+   * Typing a full name fills the rest of the line. The typed text is kept exactly as
+   * entered — only the other four fields come from the record — so a middle name being
+   * added by hand is never overwritten mid-keystroke.
+   */
+  function fillFromName(id: string, typed: string) {
+    const name = typed.toUpperCase();
+    const match = findEmployeeByName(employees, typed);
+    if (!match) {
+      setEntry(id, { name });
+      return;
+    }
+    const filled = er2EntryFromEmployee(match, id);
+    setEntry(id, {
+      employeeId: filled.employeeId,
+      name,
+      philhealthNo: filled.philhealthNo,
+      position: filled.position,
+      salary: filled.salary,
+      dateOfEmployment: filled.dateOfEmployment,
+    });
+  }
+
+  function startEntryEdit(entry: ER2Entry) {
+    setEntryBeforeEdit({ ...entry });
+    setEditingEntryId(entry.id);
+  }
+
+  function cancelEntryEdit() {
+    const restored = entryBeforeEdit;
+    const cancelledId = editingEntryId;
+    setDraft((d) => ({
+      ...d,
+      entries: restored
+        ? d.entries.map((e) => (e.id === restored.id ? restored : e))
+        : // No snapshot means the row was added in this sitting, so cancelling drops it
+          // instead of leaving an empty line behind on the form.
+          d.entries.filter((e) => e.id !== cancelledId),
+    }));
+    setEntryBeforeEdit(null);
+    setEditingEntryId(null);
   }
 
   function removeEntry(id: string) {
@@ -464,7 +447,7 @@ function ER2FormEditor({
           Preview &amp; alignment
         </Button>
         <span className="text-xs text-ink-muted">
-          {draft.entries.length} listed · {sheets} sheet{sheets === 1 ? "" : "s"}
+          {listedCount(draft)} listed · {sheets} sheet{sheets === 1 ? "" : "s"}
           {dirty ? " · unsaved changes" : ""}
         </span>
         <div className="ml-auto flex items-center gap-2">
@@ -479,69 +462,44 @@ function ER2FormEditor({
 
       {tab === "details" ? (
         <>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            <label className="flex flex-col gap-1 text-[11px] text-ink-muted">
-              Name of Employer/Firm
-              <Input
-                value={draft.employer.firmName}
-                onChange={(e) => setEmployer({ firmName: e.target.value })}
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-[11px] text-ink-muted">
-              Employer No.
-              <Input
-                value={draft.employer.employerNo}
-                onChange={(e) => setEmployer({ employerNo: e.target.value })}
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-[11px] text-ink-muted">
-              Address
-              <Input
-                value={draft.employer.address}
-                onChange={(e) => setEmployer({ address: e.target.value })}
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-[11px] text-ink-muted">
-              E-mail Address
-              <Input value={draft.employer.email} onChange={(e) => setEmployer({ email: e.target.value })} />
-            </label>
-          </div>
+          <p className="text-xs text-ink-muted">
+            The employer block, the list-type checkbox and the signature line are already printed on
+            your uploaded template, so this form only fills what PhilHealth leaves blank.
+          </p>
 
           <div className="mt-3 flex flex-wrap items-end gap-3">
-            <div className="flex flex-col gap-1 text-[11px] text-ink-muted">
-              List type
-              <div className="flex gap-2">
-                {(["initial", "subsequent"] as const).map((t) => (
-                  <Button
-                    key={t}
-                    variant={draft.employer.listType === t ? "primary" : "ghost"}
-                    onClick={() => setEmployer({ listType: t })}
-                  >
-                    {t === "initial" ? "Initial List" : "Subsequent List"}
-                  </Button>
-                ))}
-              </div>
-            </div>
+            <label className="flex min-w-[16rem] flex-1 flex-col gap-1 text-[11px] text-ink-muted">
+              Form name
+              <Input
+                value={draft.title}
+                onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))}
+              />
+            </label>
             <label className="flex flex-col gap-1 text-[11px] text-ink-muted">
-              Page No. (blank = auto)
+              Page No.
               <Input value={draft.pageNo} onChange={(e) => setDraft((d) => ({ ...d, pageNo: e.target.value }))} />
             </label>
             <label className="flex flex-col gap-1 text-[11px] text-ink-muted">
-              Of __ sheets (blank = auto)
+              Of __ sheets
               <Input value={draft.sheets} onChange={(e) => setDraft((d) => ({ ...d, sheets: e.target.value }))} />
-            </label>
-            <label className="flex flex-col gap-1 text-[11px] text-ink-muted">
-              Signature over printed name
-              <Input value={draft.signature} onChange={(e) => setDraft((d) => ({ ...d, signature: e.target.value }))} />
             </label>
           </div>
 
           <div className="mt-4 flex items-center justify-between">
-            <p className="text-sm font-medium text-ink">Total No. Listed: {draft.entries.length}</p>
+            <p className="text-sm font-medium text-ink">
+              Total No. Listed: {listedCount(draft)}
+            </p>
             <Button variant="ghost" onClick={addBlankEntry}>
               + Add employee line
             </Button>
           </div>
+
+          <p className="mb-2 text-xs text-ink-muted">
+            Type a full name or pick one from the list — the PhilHealth number, position, salary and
+            date of employment fill in from the employee record either way. Use Edit to change any
+            cell, including adding a middle name that isn&apos;t on file yet (BAYANI, HAZEL → BAYANI,
+            HAZEL ENTERIA); what you leave in the cell is what gets printed.
+          </p>
 
           <div className="mt-2 overflow-x-auto rounded-lg border border-border">
             <table className="w-full min-w-[1000px] text-left text-sm">
@@ -556,32 +514,88 @@ function ER2FormEditor({
                 </tr>
               </thead>
               <tbody>
-                {draft.entries.map((entry, i) => (
-                  <tr
-                    key={entry.id}
-                    className={`border-t border-border ${
-                      i >= layout.table.maxRows ? "bg-background/50" : ""
-                    }`}
-                  >
-                    {ER2_COLUMN_ORDER.map((col) => (
-                      <td key={col} className="px-2 py-1.5">
-                        <Input
-                          value={entry[col]}
-                          onChange={(e) => setEntry(entry.id, { [col]: e.target.value })}
-                          className="min-w-[120px]"
-                        />
+                {draft.entries.map((entry, i) => {
+                  const editing = editingEntryId === entry.id;
+                  return (
+                    <tr
+                      key={entry.id}
+                      className={`border-t border-border ${
+                        i >= layout.table.maxRows ? "bg-background/50" : ""
+                      }`}
+                    >
+                      {ER2_COLUMN_ORDER.map((col) => {
+                        if (!editing) {
+                          return (
+                            <td key={col} className="px-3 py-2 text-ink-muted">
+                              {entry[col] || "—"}
+                            </td>
+                          );
+                        }
+                        if (col === "name") {
+                          return (
+                            <td key={col} className="px-2 py-1.5">
+                              <EmployeeNameInput
+                                value={entry.name}
+                                placeholder="Type or pick a name"
+                                onChange={(name) => fillFromName(entry.id, name)}
+                                onSelect={(picked) => {
+                                  const emp = employees.find((e) => e.id === picked.id);
+                                  if (emp) applyEmployee(entry.id, emp);
+                                  else setEntry(entry.id, { name: picked.name.toUpperCase() });
+                                }}
+                                className="min-w-[220px]"
+                              />
+                            </td>
+                          );
+                        }
+                        return (
+                          <td key={col} className="px-2 py-1.5">
+                            <Input
+                              value={entry[col]}
+                              onChange={(e) =>
+                                setEntry(entry.id, { [col]: e.target.value.toUpperCase() })
+                              }
+                              className="min-w-[120px]"
+                            />
+                          </td>
+                        );
+                      })}
+                      <td className="px-3 py-2">
+                        {editing ? (
+                          <div className="flex gap-3">
+                            <button
+                              onClick={() => setEditingEntryId(null)}
+                              className="text-xs text-accent hover:underline"
+                            >
+                              Save
+                            </button>
+                            <button
+                              onClick={cancelEntryEdit}
+                              className="text-xs text-ink-muted hover:text-ink"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex gap-3">
+                            <button
+                              onClick={() => startEntryEdit(entry)}
+                              className="text-xs text-accent hover:underline"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => removeEntry(entry.id)}
+                              className="text-xs text-ink-muted hover:text-warn"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        )}
                       </td>
-                    ))}
-                    <td className="px-2 py-1.5">
-                      <button
-                        onClick={() => removeEntry(entry.id)}
-                        className="text-xs text-ink-muted hover:text-warn"
-                      >
-                        Remove
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -595,8 +609,9 @@ function ER2FormEditor({
         <>
           <p className="mb-2 text-xs text-ink-muted">
             Drag any marker onto the right cell of your template — the position is saved with this form
-            and used for the download. Column markers set where that column&apos;s text starts; the row
-            marker sets the first line of the table.
+            and used for the download. The total and page-number markers are centred on where the
+            number prints; column markers set where that column&apos;s text starts, and the row marker
+            sets the first line of the table.
           </p>
           <div className="mb-2 flex flex-wrap items-end gap-3">
             <label className="flex flex-col gap-1 text-[11px] text-ink-muted">
@@ -659,7 +674,7 @@ function ER2FormEditor({
                 title={`${v.label} — drag into place`}
                 onPointerDown={() => setDragging(v.key)}
                 style={{ left: `${v.x * 100}%`, top: `${v.y * 100}%` }}
-                className={`absolute -translate-y-1/2 cursor-move whitespace-nowrap rounded-sm border px-1 text-[10px] leading-tight ${
+                className={`absolute -translate-x-1/2 -translate-y-1/2 cursor-move whitespace-nowrap rounded-sm border px-1 text-[10px] leading-tight ${
                   dragging === v.key
                     ? "border-accent bg-accent text-white"
                     : "border-accent/60 bg-surface/90 text-ink"

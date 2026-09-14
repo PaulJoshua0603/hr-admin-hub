@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { v4 as uuid } from "uuid";
 import { format } from "date-fns";
@@ -10,6 +10,7 @@ import {
   Button,
   Card,
   EmptyState,
+  FileButton,
   Input,
   Pill,
   SearchInput,
@@ -17,6 +18,7 @@ import {
   StatCard,
   StatusSelect,
   TableWrap,
+  ToolbarDivider,
 } from "@/components/ui";
 import {
   emptyPreEmploymentChecklist,
@@ -34,7 +36,13 @@ import {
   type CustomReportTable,
 } from "@/types";
 import { useNotifications } from "@/lib/notificationContext";
-import { groupEmployees, isAwaitingOnboarding, resignedCoeIndex, separationDate as separationDateOf } from "@/lib/employeeStatus";
+import {
+  countableEmployees,
+  groupEmployees,
+  isAwaitingOnboarding,
+  resignedCoeIndex,
+  separationDate as separationDateOf,
+} from "@/lib/employeeStatus";
 import {
   SIXTH_MONTH_NOTE_REFERENCE,
   sixthMonthNoteLabels,
@@ -63,6 +71,18 @@ function isSeparatedStatus(status: string): boolean {
   return /resign|terminat|awol/i.test(status.trim());
 }
 
+/**
+ * Status values known to mean the person is still employed. Anything that is neither
+ * these nor a separation status is reported back rather than assumed — an unrecognised
+ * value used to count silently as active, so a status this app had never seen would keep
+ * someone in the headcount with nothing to show for it.
+ */
+function isKnownActiveStatus(status: string): boolean {
+  return /^(active|regular|probationary|probation|project[- ]based|contractual|consultant|part[- ]time|full[- ]time|trainee|intern)$/i.test(
+    status.trim()
+  );
+}
+
 function isActive(e: Employee): boolean {
   return !e.lastDay && e.resignedStatus !== "resigned";
 }
@@ -76,17 +96,23 @@ export default function EmployeesPage() {
   const [showForm, setShowForm] = useState(false);
   const [importing, setImporting] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const syncFileRef = useRef<HTMLInputElement | null>(null);
   const [syncPreview, setSyncPreview] = useState<{
     changes: StatusSyncChange[];
     examined: number;
     unmatched: string[];
+    /** Status values in the file this app does not recognise, with how often they appear. */
+    unknownStatuses: { status: string; count: number }[];
   } | null>(null);
   const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
   const [confirmBulkComplete, setConfirmBulkComplete] = useState(false);
   const [confirmDateFix, setConfirmDateFix] = useState(false);
   const [showDuplicates, setShowDuplicates] = useState(false);
   const [name, setName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [middleName, setMiddleName] = useState("");
+  /** Set once the full name is typed over, so editing the parts stops overwriting it. */
+  const [nameEdited, setNameEdited] = useState(false);
   const [position, setPosition] = useState("");
   const [department, setDepartment] = useState("");
   const [dateSent, setDateSent] = useState(todayISO().slice(0, 10));
@@ -131,6 +157,7 @@ export default function EmployeesPage() {
 
       const changes: StatusSyncChange[] = [];
       const unmatched: string[] = [];
+      const unknown = new Map<string, number>();
       let examined = 0;
 
       for (const row of rows) {
@@ -155,6 +182,9 @@ export default function EmployeesPage() {
         examined++;
 
         const nextResigned = isSeparatedStatus(status);
+        if (status && !nextResigned && !isKnownActiveStatus(status)) {
+          unknown.set(status, (unknown.get(status) || 0) + 1);
+        }
         const nextLastDay = parseExcelDate(row["Separation Date"]);
         const wasResigned = employee.resignedStatus === "resigned" || !!employee.lastDay;
         const reasons: string[] = [];
@@ -174,7 +204,10 @@ export default function EmployeesPage() {
         }
       }
 
-      setSyncPreview({ changes, examined, unmatched });
+      const unknownStatuses = [...unknown.entries()]
+        .map(([status, count]) => ({ status, count }))
+        .sort((a, b) => b.count - a.count);
+      setSyncPreview({ changes, examined, unmatched, unknownStatuses });
       if (changes.length === 0) {
         notify(`Checked ${examined} matching records — everything already matches the file.`, "info");
       }
@@ -182,7 +215,6 @@ export default function EmployeesPage() {
       notify("Could not read that file. Export it as .xlsx and try again.", "warn");
     } finally {
       setSyncing(false);
-      if (syncFileRef.current) syncFileRef.current.value = "";
     }
   }
 
@@ -224,13 +256,26 @@ export default function EmployeesPage() {
     setEditingId(null);
   }
 
+  /**
+   * The full name, built from the parts the same way an import builds it ("First M. Last")
+   * unless it has been typed over by hand.
+   */
+  const composedName = formatFullName(firstName, middleName, lastName);
+  const effectiveName = nameEdited || !composedName ? name : composedName;
+
   function handleAdd() {
-    if (!name.trim()) return;
+    const finalName = effectiveName.trim();
+    if (!finalName) return;
     const dateAdded = todayISO();
     const sentISO = dateSent ? new Date(dateSent).toISOString() : dateAdded;
     add({
       id: uuid(),
-      name: name.trim(),
+      name: finalName,
+      // Kept separately from the display name so forms needing "SURNAME, FIRST MIDDLE"
+      // can print the full middle name rather than an initial.
+      firstName: firstName.trim() || undefined,
+      middleName: middleName.trim() || undefined,
+      lastName: lastName.trim() || undefined,
       position: position.trim() || undefined,
       department: department.trim() || undefined,
       dateAdded,
@@ -242,8 +287,12 @@ export default function EmployeesPage() {
       onboardingChecklist: defaultOnboardingChecklist(),
       isRegular: false,
     });
-    notify(`Employee added: "${name.trim()}"`, "created");
+    notify(`Employee added: "${finalName}"`, "created");
     setName("");
+    setLastName("");
+    setFirstName("");
+    setMiddleName("");
+    setNameEdited(false);
     setPosition("");
     setDepartment("");
     setDateSent(todayISO().slice(0, 10));
@@ -314,13 +363,11 @@ export default function EmployeesPage() {
       const imported: Employee[] = [];
       for (const row of rows) {
         const fullNameCol = String(row["Full Name"] || row["Employee Name"] || "").trim();
+        const firstName = String(row["First Name"] || "").trim();
+        const middleName = String(row["Middle Name"] || "").trim();
+        const lastName = String(row["Last Name"] || "").trim();
         let name = fullNameCol;
-        if (!name) {
-          const first = String(row["First Name"] || "").trim();
-          const middle = String(row["Middle Name"] || "").trim();
-          const last = String(row["Last Name"] || "").trim();
-          name = formatFullName(first, middle, last);
-        }
+        if (!name) name = formatFullName(firstName, middleName, lastName);
         if (!name || /^admin\b/i.test(name)) continue;
 
         const statusRaw = String(row["Employee Status"] || "").trim();
@@ -357,6 +404,9 @@ export default function EmployeesPage() {
           lastDay,
           homeAddress: rawAddress || undefined,
           homeCity: String(row["City"] || "").trim() || undefined,
+          firstName: firstName || undefined,
+          middleName: middleName || undefined,
+          lastName: lastName || undefined,
           companyIdNumber: String(row["Employee ID"] || "").trim() || undefined,
           biometricsNo: String(row["Biometric ID"] || "").trim() || undefined,
           philhealthNo: String(row["PhilHealth"] || "").trim() || undefined,
@@ -377,6 +427,80 @@ export default function EmployeesPage() {
       notify(`Imported ${imported.length} employee(s) from Excel`, "created");
     } catch (err) {
       notify(`Import failed: ${err instanceof Error ? err.message : "Unknown error"}`, "warn");
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  /**
+   * Fills in the separate Last / Middle / First name columns on records that already
+   * exist, matched on Employee ID and falling back to the display name.
+   *
+   * Records imported before those columns existed only have a display name like
+   * "Patricia Mae B. Mallari", and a display name cannot be taken apart reliably — the
+   * middle name has already been shortened to an initial, and a surname of two or three
+   * words ("San Pedro III", "Dela Cruz") is indistinguishable from a middle name. That is
+   * why the ER2 form can only print "MALLARI, PATRICIA MAE B." today. With the real parts
+   * on file it prints the full middle name.
+   *
+   * Only the three name fields are written; the display name and everything else on the
+   * record are left exactly as they are.
+   */
+  async function handleImportNameParts(file: File) {
+    setImporting(true);
+    try {
+      const XLSX = await import("@e965/xlsx");
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array", cellDates: true });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows: Record<string, unknown>[] = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+
+      const byId = new Map<string, Record<string, unknown>>();
+      const byName = new Map<string, Record<string, unknown>>();
+      for (const row of rows) {
+        const id = String(row["Employee ID"] || "").trim();
+        if (id) byId.set(id, row);
+        const first = String(row["First Name"] || "").trim();
+        const middle = String(row["Middle Name"] || "").trim();
+        const last = String(row["Last Name"] || "").trim();
+        const display = formatFullName(first, middle, last).toLowerCase();
+        if (display) byName.set(display, row);
+      }
+
+      let matched = 0;
+      let withMiddle = 0;
+      const updated = employees.map((e) => {
+        const row =
+          byId.get(String(e.companyIdNumber || "").trim()) || byName.get(e.name.trim().toLowerCase());
+        if (!row) return e;
+        const firstName = String(row["First Name"] || "").trim();
+        const middleName = String(row["Middle Name"] || "").trim();
+        const lastName = String(row["Last Name"] || "").trim();
+        if (!firstName && !middleName && !lastName) return e;
+        matched += 1;
+        if (middleName) withMiddle += 1;
+        return {
+          ...e,
+          firstName: firstName || e.firstName,
+          middleName: middleName || e.middleName,
+          lastName: lastName || e.lastName,
+        };
+      });
+
+      if (matched === 0) {
+        notify(
+          "No matching employees found. The file needs Employee ID, Last Name, Middle Name and First Name columns.",
+          "warn"
+        );
+        return;
+      }
+      setItems(updated);
+      notify(
+        `Updated name parts on ${matched} employee(s) — ${withMiddle} now carry a full middle name`,
+        "updated"
+      );
+    } catch (err) {
+      notify(`Update failed: ${err instanceof Error ? err.message : "Unknown error"}`, "warn");
     } finally {
       setImporting(false);
     }
@@ -521,119 +645,104 @@ export default function EmployeesPage() {
       <SectionHeading
         title="Employees"
         subtitle={`${employees.length} employee${employees.length === 1 ? "" : "s"} on file. Onboarding requirements, milestones, and regularization tracking.`}
-        action={
-          <div className="flex flex-wrap items-center gap-2">
+        toolbar={
+          <>
+            {/* Everyday action first, then the data tools, then the destructive ones set
+                apart — so "Delete all employees" is never a neighbour of a routine button. */}
+            <Button onClick={() => setShowForm((s) => !s)}>+ Add employee</Button>
+
+            <ToolbarDivider />
+
+            <FileButton
+              accept=".xlsx,.xls"
+              disabled={importing}
+              onFile={handleImportExcel}
+              title="Add or update employee records from an HR export"
+            >
+              {importing ? "Importing…" : "Import from Excel"}
+            </FileButton>
+            <FileButton
+              accept=".xlsx,.xls"
+              disabled={importing}
+              onFile={handleImportEmailSupervisor}
+              title="Fill in company email and immediate supervisor on existing records"
+            >
+              {importing ? "Updating…" : "Update email / supervisor"}
+            </FileButton>
+            <FileButton
+              accept=".xlsx,.xls"
+              disabled={importing}
+              onFile={handleImportNameParts}
+              title="Fill in Last / Middle / First name on existing records so forms can print the full middle name"
+            >
+              {importing ? "Updating…" : "Update full names"}
+            </FileButton>
+            <FileButton
+              accept=".xlsx,.xls"
+              disabled={syncing}
+              onFile={handleStatusSync}
+              title="Re-read the HR export and correct employment status and separation dates"
+            >
+              {syncing ? "Checking…" : "Sync status / separation dates"}
+            </FileButton>
+
             {duplicateCount > 0 && (
               <Button variant="ghost" onClick={() => setShowDuplicates((s) => !s)}>
                 ⚠ {duplicateCount} duplicate{duplicateCount === 1 ? "" : "s"}
               </Button>
             )}
-            <input
-              ref={syncFileRef}
-              type="file"
-              accept=".xlsx,.xls"
-              className="hidden"
-              disabled={syncing}
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) handleStatusSync(file);
-              }}
-            />
-            <Button
-              variant="secondary"
-              disabled={syncing}
-              onClick={() => syncFileRef.current?.click()}
-              title="Re-read the HR export and correct employment status and separation dates on existing records"
-            >
-              {syncing ? "Checking…" : "Sync status / separation dates"}
-            </Button>
-            <label className="cursor-pointer">
-              <span
-                className={`inline-flex h-9 items-center rounded-lg border border-border bg-surface px-3.5 text-sm font-medium text-ink hover:bg-background ${
-                  importing ? "opacity-50" : ""
-                }`}
-              >
-                {importing ? "Importing…" : "Import from Excel"}
-              </span>
-              <input
-                type="file"
-                accept=".xlsx,.xls"
-                className="hidden"
-                disabled={importing}
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) handleImportExcel(file);
-                  e.target.value = "";
-                }}
-              />
-            </label>
-            <label className="cursor-pointer">
-              <span
-                className={`inline-flex items-center rounded-md border border-border bg-surface px-3 py-1.5 text-sm font-medium text-ink-muted hover:bg-background ${
-                  importing ? "opacity-50" : ""
-                }`}
-              >
-                {importing ? "Updating…" : "Update Email/Supervisor"}
-              </span>
-              <input
-                type="file"
-                accept=".xlsx,.xls"
-                className="hidden"
-                disabled={importing}
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) handleImportEmailSupervisor(file);
-                  e.target.value = "";
-                }}
-              />
-            </label>
-            <Button onClick={() => setShowForm((s) => !s)}>+ Add employee</Button>
-            {employees.length > 0 &&
-              (confirmBulkComplete ? (
-                <div className="flex items-center gap-1.5">
-                  <Button variant="danger" onClick={bulkMarkComplete}>
-                    Confirm mark all complete
+
+            {employees.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+                {confirmBulkComplete ? (
+                  <>
+                    <Button variant="danger" onClick={bulkMarkComplete}>
+                      Confirm mark all complete
+                    </Button>
+                    <Button variant="ghost" onClick={() => setConfirmBulkComplete(false)}>
+                      Cancel
+                    </Button>
+                  </>
+                ) : (
+                  <Button variant="ghost" onClick={() => setConfirmBulkComplete(true)}>
+                    Mark all complete
                   </Button>
-                  <Button variant="ghost" onClick={() => setConfirmBulkComplete(false)}>
-                    Cancel
+                )}
+
+                {confirmDateFix ? (
+                  <>
+                    <Button variant="danger" onClick={bulkFixDateShift}>
+                      Confirm +1 day fix
+                    </Button>
+                    <Button variant="ghost" onClick={() => setConfirmDateFix(false)}>
+                      Cancel
+                    </Button>
+                  </>
+                ) : (
+                  <Button variant="ghost" onClick={() => setConfirmDateFix(true)}>
+                    Fix date shift (+1 day)
                   </Button>
-                </div>
-              ) : (
-                <Button variant="ghost" onClick={() => setConfirmBulkComplete(true)}>
-                  Bulk: Mark Requirements/Onboarding Complete
-                </Button>
-              ))}
-            {employees.length > 0 &&
-              (confirmDateFix ? (
-                <div className="flex items-center gap-1.5">
-                  <Button variant="danger" onClick={bulkFixDateShift}>
-                    Confirm +1 day fix
+                )}
+
+                <ToolbarDivider />
+
+                {confirmDeleteAll ? (
+                  <>
+                    <Button variant="danger" onClick={deleteAllEmployees}>
+                      Confirm delete all ({employees.length})
+                    </Button>
+                    <Button variant="ghost" onClick={() => setConfirmDeleteAll(false)}>
+                      Cancel
+                    </Button>
+                  </>
+                ) : (
+                  <Button variant="danger" onClick={() => setConfirmDeleteAll(true)}>
+                    Delete all employees
                   </Button>
-                  <Button variant="ghost" onClick={() => setConfirmDateFix(false)}>
-                    Cancel
-                  </Button>
-                </div>
-              ) : (
-                <Button variant="ghost" onClick={() => setConfirmDateFix(true)}>
-                  Fix Imported Date Shift (+1 day)
-                </Button>
-              ))}
-            {employees.length > 0 &&
-              (confirmDeleteAll ? (
-                <div className="flex items-center gap-1.5">
-                  <Button variant="danger" onClick={deleteAllEmployees}>
-                    Confirm delete all ({employees.length})
-                  </Button>
-                  <Button variant="ghost" onClick={() => setConfirmDeleteAll(false)}>
-                    Cancel
-                  </Button>
-                </div>
-              ) : (
-                <Button variant="danger" onClick={() => setConfirmDeleteAll(true)}>
-                  Delete all employees
-                </Button>
-              ))}
-          </div>
+                )}
+              </div>
+            )}
+          </>
         }
       />
 
@@ -653,6 +762,17 @@ export default function EmployeesPage() {
                     syncPreview.unmatched.length === 1 ? "" : "s"
                   } in the file had no matching employee and were skipped.`}
               </p>
+              {syncPreview.unknownStatuses.length > 0 && (
+                <p className="mt-2 text-xs text-warn">
+                  Unrecognised Employee Status value
+                  {syncPreview.unknownStatuses.length === 1 ? "" : "s"} in this file, left as
+                  active:{" "}
+                  {syncPreview.unknownStatuses
+                    .map((u) => `"${u.status}" (${u.count})`)
+                    .join(", ")}
+                  . If any of these mean the person has left, tell me and I will add them.
+                </p>
+              )}
             </div>
             <div className="flex gap-2">
               <Button onClick={applyStatusSync} disabled={syncPreview.changes.length === 0}>
@@ -744,22 +864,58 @@ export default function EmployeesPage() {
       {showForm && (
         <Card className="mb-6">
           <div className="grid gap-3 sm:grid-cols-3">
-            <Input
-              placeholder="Employee name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              autoFocus
-            />
-            <Input
-              placeholder="Position"
-              value={position}
-              onChange={(e) => setPosition(e.target.value)}
-            />
-            <Input
-              placeholder="Department"
-              value={department}
-              onChange={(e) => setDepartment(e.target.value)}
-            />
+            <label className="flex flex-col gap-1 text-xs text-ink-muted">
+              Last Name
+              <Input
+                placeholder="e.g. Bayani"
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+                autoFocus
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-ink-muted">
+              First Name
+              <Input
+                placeholder="e.g. Hazel"
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-ink-muted">
+              Middle Name
+              <Input
+                placeholder="e.g. Enteria"
+                value={middleName}
+                onChange={(e) => setMiddleName(e.target.value)}
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-ink-muted sm:col-span-3">
+              Full Name
+              <Input
+                placeholder="Fills in from the three names above"
+                value={effectiveName}
+                onChange={(e) => {
+                  setNameEdited(true);
+                  setName(e.target.value);
+                }}
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-ink-muted">
+              Position
+              <Input
+                placeholder="Position"
+                value={position}
+                onChange={(e) => setPosition(e.target.value)}
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-ink-muted">
+              Department
+              <Input
+                placeholder="Department"
+                value={department}
+                onChange={(e) => setDepartment(e.target.value)}
+              />
+            </label>
             <label className="flex flex-col gap-1 text-xs text-ink-muted">
               Date MC sent pre-employment requirements
               <Input
@@ -786,7 +942,10 @@ export default function EmployeesPage() {
             </label>
           </div>
           <p className="mt-2 text-xs text-ink-muted">
-            Requirements deadline auto-fills to 2 weeks after the date sent.
+            Full Name fills in from Last / First / Middle as &ldquo;First M. Last&rdquo; — type over
+            it if this person is written differently. The three names are stored separately so the
+            ER2 PhilHealth form can print the full middle name instead of an initial. Requirements
+            deadline auto-fills to 2 weeks after the date sent.
           </p>
           <div className="mt-3 flex gap-2">
             <Button onClick={handleAdd}>Save employee</Button>
@@ -1099,6 +1258,11 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
 
   // Shared classification — the same split the Employees count cards use.
   const coeIndex = resignedCoeIndex(coeRequests);
+
+  // Headcounts are taken over real people only; the admin account and any placeholder
+  // rows left by a test import are set aside so these cards match the HR export.
+  const roster = countableEmployees(employees);
+  const excludedCount = employees.length - roster.length;
   const separationDate = (e: Employee) => separationDateOf(e, coeIndex);
 
   function toFilterRow(e: Employee, date: string): FilterRow {
@@ -1115,25 +1279,25 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
 
   // Active, new hires and resigned are shown in full rather than filtered by the date
   // range above — these lists answer "who works here now", not "who changed this period".
-  const activeRows: FilterRow[] = employees
+  const activeRows: FilterRow[] = roster
     .filter((e) => separationDate(e) === null && !isAwaitingOnboarding(e))
     .map((e) => toFilterRow(e, e.dateAdded))
     .sort((a, b) => a.name.localeCompare(b.name));
 
   // Hired on paper but their onboarding date is still ahead of them.
-  const newHireRows: FilterRow[] = employees
+  const newHireRows: FilterRow[] = roster
     .filter((e) => separationDate(e) === null && isAwaitingOnboarding(e))
     .map((e) => toFilterRow(e, e.dateHired!))
     .sort((a, b) => (a.date < b.date ? -1 : 1));
 
-  const resignedRows: FilterRow[] = employees
+  const resignedRows: FilterRow[] = roster
     .map((e) => ({ e, date: separationDate(e) }))
     .filter((x): x is { e: Employee; date: string } => x.date !== null)
     .map(({ e, date }) => toFilterRow(e, date))
     .sort((a, b) => (a.date < b.date ? 1 : -1));
 
   // COE records naming someone who isn't in the employee list yet still belong here.
-  const knownNames = new Set(employees.map((e) => e.name.trim().toLowerCase()));
+  const knownNames = new Set(roster.map((e) => e.name.trim().toLowerCase()));
   const orphanResignedRows: FilterRow[] = [...coeIndex.entries()]
     .filter(([name]) => !knownNames.has(name))
     .map(([name, date]) => {
@@ -1684,14 +1848,21 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                   {activeRows.length} active + {newHireRows.length} new hires + {resignedRows.length}{" "}
                   resigned = {activeRows.length + newHireRows.length + resignedRows.length}
                 </span>
-                <span className="text-ink-muted"> of {employees.length} employee records on file.</span>
-                {activeRows.length + newHireRows.length + resignedRows.length !== employees.length && (
+                <span className="text-ink-muted"> of {roster.length} employees on file.</span>
+                {activeRows.length + newHireRows.length + resignedRows.length !== roster.length && (
                   <span className="ml-1 font-medium text-warn">
                     Mismatch of{" "}
                     {Math.abs(
-                      employees.length - (activeRows.length + newHireRows.length + resignedRows.length)
+                      roster.length - (activeRows.length + newHireRows.length + resignedRows.length)
                     )}{" "}
-                    — every record should land in exactly one bucket.
+                    — every employee should land in exactly one bucket.
+                  </span>
+                )}
+                {excludedCount > 0 && (
+                  <span className="ml-1 text-ink-muted">
+                    {employees.length} records are on file; {excludedCount} (the admin account and
+                    any placeholder rows from a test import) {excludedCount === 1 ? "is" : "are"} not
+                    counted as staff.
                   </span>
                 )}
                 {orphanResignedRows.length > 0 && (

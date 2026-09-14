@@ -3,9 +3,9 @@
 import { useState } from "react";
 import { v4 as uuid } from "uuid";
 import { useSupabaseStore } from "@/lib/useSupabaseStore";
-import { Button, Card, Input, SectionHeading } from "@/components/ui";
+import { Button, Card, CollapsibleSection, Input, SectionHeading } from "@/components/ui";
 import { EmployeeNameInput } from "@/components/EmployeeNameInput";
-import { formatDate, todayISO } from "@/lib/dates";
+import { formatDate, formatTime24, todayISO } from "@/lib/dates";
 import { useNotifications } from "@/lib/notificationContext";
 import type {
   ER2ReportRow,
@@ -25,7 +25,7 @@ export default function ReportsPage() {
     <div>
       <SectionHeading
         title="Reports"
-        subtitle="Fill these in throughout the month — they're automatically included whenever you export the Centralized COE Tracker to Excel."
+        subtitle="Click a report to open it. Everything here is automatically included whenever you export the Centralized COE Tracker to Excel."
       />
       <div className="flex flex-col gap-6">
         <ER2Table />
@@ -89,6 +89,8 @@ type ER2Draft = { employeeName: string; position: string; department: string; da
 
 function ER2Table() {
   const { items, hydrated, add, update, remove } = useSupabaseStore<ER2ReportRow>("hr_report_er2", []);
+  /** Latest first — the newest record is the one being worked on. */
+  const sortedItems = [...items].sort((a, b) => (a.dateCreated < b.dateCreated ? 1 : -1));
   const { notify } = useNotifications();
   const [form, setForm] = useState<ER2Draft>({
     employeeName: "",
@@ -141,8 +143,7 @@ function ER2Table() {
 
   if (!hydrated) return null;
   return (
-    <Card>
-      <h2 className="font-display text-lg text-ink">ER2 Form for PhilHealth Report</h2>
+    <CollapsibleSection title="ER2 Form for PhilHealth Report" count={items.length}>
       <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-5">
         <EmployeeNameInput
           value={form.employeeName}
@@ -170,7 +171,7 @@ function ER2Table() {
               </tr>
             </thead>
             <tbody>
-              {items.map((r) =>
+              {sortedItems.map((r) =>
                 editingId === r.id ? (
                   <tr key={r.id} className="border-t border-border">
                     <td className="px-3 py-2">
@@ -228,7 +229,7 @@ function ER2Table() {
           </table>
         </div>
       )}
-    </Card>
+    </CollapsibleSection>
   );
 }
 
@@ -257,6 +258,8 @@ function RegularizationTable() {
     "hr_report_regularization",
     []
   );
+  /** Latest first. */
+  const sortedItems = [...items].sort((a, b) => (a.dateCreated < b.dateCreated ? 1 : -1));
   const { notify } = useNotifications();
   const [form, setForm] = useState<RegDraft>(emptyRegDraft());
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -302,8 +305,7 @@ function RegularizationTable() {
 
   if (!hydrated) return null;
   return (
-    <Card>
-      <h2 className="font-display text-lg text-ink">Confirmation of Regularization Report</h2>
+    <CollapsibleSection title="Confirmation of Regularization Report" count={items.length}>
       <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-6 sm:items-end">
         <EmployeeNameInput
           value={form.employeeName}
@@ -339,7 +341,7 @@ function RegularizationTable() {
               </tr>
             </thead>
             <tbody>
-              {items.map((r) =>
+              {sortedItems.map((r) =>
                 editingId === r.id ? (
                   <tr key={r.id} className="border-t border-border">
                     <td className="px-3 py-2">
@@ -406,7 +408,7 @@ function RegularizationTable() {
           </table>
         </div>
       )}
-    </Card>
+    </CollapsibleSection>
   );
 }
 
@@ -538,13 +540,11 @@ function COECategoryTable({
   }
 
   return (
-    <Card>
-      <h2 className="font-display text-lg text-ink">{title}</h2>
-      <p className="mt-1 text-xs text-ink-muted">
-        Shared with the Centralized COE Tracker under Employees — edits here show up there, and the other way
-        around.
-      </p>
-
+    <CollapsibleSection
+      title={title}
+      count={rows.length}
+      subtitle="Shared with the Centralized COE Tracker under Employees — edits here show up there, and the other way around."
+    >
       <div className={`mt-3 grid grid-cols-1 gap-2 sm:items-end ${withPurpose ? "sm:grid-cols-7" : "sm:grid-cols-6"}`}>
         <EmployeeNameInput
           value={form.employeeName}
@@ -675,7 +675,7 @@ function COECategoryTable({
           </table>
         </div>
       )}
-    </Card>
+    </CollapsibleSection>
   );
 }
 
@@ -689,6 +689,8 @@ function emptyEventDraft(): EventDraft {
 
 function EventsTable() {
   const { items, hydrated, add, update, remove } = useSupabaseStore<EventReportRow>("hr_report_events", []);
+  /** Most recent event first. */
+  const sortedItems = [...items].sort((a, b) => (a.date < b.date ? 1 : -1));
   const { notify } = useNotifications();
   const [form, setForm] = useState<EventDraft>(emptyEventDraft());
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -734,8 +736,7 @@ function EventsTable() {
 
   if (!hydrated) return null;
   return (
-    <Card>
-      <h2 className="font-display text-lg text-ink">Events Attended Report</h2>
+    <CollapsibleSection title="Events Attended Report" count={items.length}>
       <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-6 sm:items-end">
         <Input placeholder="Event Name" value={form.eventName} onChange={(e) => setForm((f) => ({ ...f, eventName: e.target.value }))} />
         <label className="flex flex-col gap-1 text-[11px] text-ink-muted">
@@ -768,7 +769,7 @@ function EventsTable() {
               </tr>
             </thead>
             <tbody>
-              {items.map((r) =>
+              {sortedItems.map((r) =>
                 editingId === r.id ? (
                   <tr key={r.id} className="border-t border-border">
                     <td className="px-3 py-2">
@@ -794,8 +795,8 @@ function EventsTable() {
                   <tr key={r.id} className="border-t border-border">
                     <td className="px-3 py-2 text-ink">{r.eventName}</td>
                     <td className="px-3 py-2 text-ink-muted">{formatDate(r.date, "MMMM d, yyyy")}</td>
-                    <td className="px-3 py-2 text-ink-muted">{r.time || "—"}</td>
-                    <td className="px-3 py-2 text-ink-muted">{r.endTime || "—"}</td>
+                    <td className="px-3 py-2 text-ink-muted">{formatTime24(r.time) || "—"}</td>
+                    <td className="px-3 py-2 text-ink-muted">{formatTime24(r.endTime || "") || "—"}</td>
                     <td className="px-3 py-2 text-ink-muted">{r.location || "—"}</td>
                     <td className="px-3 py-2">
                       <RowActions
@@ -813,7 +814,7 @@ function EventsTable() {
           </table>
         </div>
       )}
-    </Card>
+    </CollapsibleSection>
   );
 }
 
@@ -823,6 +824,8 @@ type PlanDraft = { plan: string; startDate: string; endDate: string };
 
 function PlanTable() {
   const { items, hydrated, add, update, remove } = useSupabaseStore<PlanReportRow>("hr_report_plans", []);
+  /** Most recent plan first, by the week it starts. */
+  const sortedItems = [...items].sort((a, b) => (a.startDate < b.startDate ? 1 : -1));
   const { notify } = useNotifications();
   const [form, setForm] = useState<PlanDraft>({ plan: "", startDate: todayISO().slice(0, 10), endDate: todayISO().slice(0, 10) });
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -849,8 +852,7 @@ function PlanTable() {
 
   if (!hydrated) return null;
   return (
-    <Card>
-      <h2 className="font-display text-lg text-ink">Plan for Next Week</h2>
+    <CollapsibleSection title="Plan for Next Week" count={items.length}>
       <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-4">
         <Input placeholder="Plan for Next Week" value={form.plan} onChange={(e) => setForm((f) => ({ ...f, plan: e.target.value }))} className="sm:col-span-2" />
         <Input type="date" value={form.startDate} onChange={(e) => setForm((f) => ({ ...f, startDate: e.target.value }))} />
@@ -870,7 +872,7 @@ function PlanTable() {
               </tr>
             </thead>
             <tbody>
-              {items.map((r) =>
+              {sortedItems.map((r) =>
                 editingId === r.id ? (
                   <tr key={r.id} className="border-t border-border">
                     <td className="px-3 py-2">
@@ -907,7 +909,7 @@ function PlanTable() {
           </table>
         </div>
       )}
-    </Card>
+    </CollapsibleSection>
   );
 }
 

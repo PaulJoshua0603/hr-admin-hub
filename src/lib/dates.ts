@@ -78,6 +78,22 @@ export function nextMondayISO(fromISO?: string): string {
 }
 
 /**
+ * Normalises a time to 24-hour `HH:mm` — "14:30", never the military "1430" and never
+ * a 12-hour form. Pads a single-digit hour and accepts a bare "1430" typed by hand.
+ * Blank or unparseable values pass through untouched.
+ */
+export function formatTime24(value: string): string {
+  const raw = (value || "").trim();
+  if (!raw) return "";
+  const match = /^(d{1,2}):?(d{2})/.exec(raw);
+  if (!match) return raw;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isFinite(hours) || hours > 23 || minutes > 59) return raw;
+  return `${String(hours).padStart(2, "0")}:${match[2]}`;
+}
+
+/**
  * Turns a 24-hour `HH:mm` time (what `<input type="time">` stores) into 12-hour
  * display form, e.g. "17:30" -> "5:30 PM". Blank or unparseable values pass through.
  */

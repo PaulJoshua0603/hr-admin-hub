@@ -1,16 +1,9 @@
 import type { ER2Column, ER2Layout, ER2SingleField } from "@/types";
 
 export const ER2_FIELD_LABELS: Record<ER2SingleField, string> = {
-  firmName: "Name of Employer/Firm",
-  employerNo: "Employer No.",
-  address: "Address",
-  email: "E-mail Address",
-  initialBox: "Initial List checkbox",
-  subsequentBox: "Subsequent List checkbox",
   totalListed: "Total No. Listed Above",
   pageNo: "Page No.",
   sheets: "Of __ Sheets",
-  signature: "Signature over printed name",
 };
 
 export const ER2_COLUMN_LABELS: Record<ER2Column, string> = {
@@ -19,8 +12,13 @@ export const ER2_COLUMN_LABELS: Record<ER2Column, string> = {
   position: "Position",
   salary: "Salary",
   dateOfEmployment: "Date of Employment",
-  previousEmployer: "Previous Employer",
 };
+
+/**
+ * Where the last fillable column ends — the "(DO NOT FILL) EFF. DATE OF COVERAGE"
+ * column begins here, so Date of Employment must not run past it.
+ */
+export const ER2_LAST_COLUMN_RIGHT = 0.692;
 
 export const ER2_COLUMN_ORDER: ER2Column[] = [
   "philhealthNo",
@@ -28,7 +26,6 @@ export const ER2_COLUMN_ORDER: ER2Column[] = [
   "position",
   "salary",
   "dateOfEmployment",
-  "previousEmployer",
 ];
 
 /**
@@ -42,31 +39,34 @@ export const ER2_COLUMN_ORDER: ER2Column[] = [
  */
 export const DEFAULT_ER2_LAYOUT: ER2Layout = {
   fields: {
-    firmName: { x: 0.17, y: 0.183 },
-    employerNo: { x: 0.78, y: 0.196 },
-    address: { x: 0.1, y: 0.216 },
-    email: { x: 0.68, y: 0.216 },
-    initialBox: { x: 0.437, y: 0.116 },
-    subsequentBox: { x: 0.437, y: 0.134 },
-    totalListed: { x: 0.3, y: 0.937 },
-    pageNo: { x: 0.523, y: 0.959 },
-    sheets: { x: 0.575, y: 0.959 },
-    signature: { x: 0.8, y: 0.944 },
+    // These three are drawn centred on their anchor, so each x is the MIDDLE of the space
+    // the number occupies, not its left edge: the total is centred in the "TOTAL NO.
+    // LISTED ABOVE" cell, and the page and sheet numbers are centred on the two blanks of
+    // "PAGE __ OF __ SHEETS" so neither one crowds the words either side of it.
+    totalListed: { x: 0.235, y: 0.92 },
+    pageNo: { x: 0.531, y: 0.942 },
+    sheets: { x: 0.57, y: 0.942 },
   },
   table: {
     firstRowY: 0.322,
-    rowHeight: 0.0305,
-    maxRows: 20,
+    // Rows are given room to breathe: a value that wraps onto a second line still clears
+    // the entry below it. Taller rows mean fewer per sheet, and the list continues on
+    // another copy of the template when it runs out.
+    rowHeight: 0.052,
+    maxRows: 11,
+    // Each value starts just inside its column rule, the same way the employer
+    // details sit a little after their labels on the printed template.
     columns: {
-      philhealthNo: 0.03,
-      name: 0.148,
-      position: 0.379,
-      salary: 0.517,
-      dateOfEmployment: 0.588,
-      previousEmployer: 0.773,
+      philhealthNo: 0.028,
+      name: 0.158,
+      position: 0.391,
+      salary: 0.534,
+      dateOfEmployment: 0.619,
     },
   },
-  fontSize: 8,
+  // Arial 10 as requested. Helvetica is the PDF standard font Arial maps to — same
+  // metrics, so spacing matches what Word/Excel would print.
+  fontSize: 10,
 };
 
 /** Deep copy so an edited calibration never mutates the shared default. */
