@@ -5,11 +5,13 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { v4 as uuid } from "uuid";
 import { useSupabaseStore } from "@/lib/useSupabaseStore";
+import { buildRelieverContractPdf, relieverContractFileName } from "@/lib/relieverContractPdf";
 import { useNotifications } from "@/lib/notificationContext";
 import { addDaysISO, addMonthsISO, daysSince, formatDate, isOverdue, nextMondayISO, todayISO } from "@/lib/dates";
 import {
   exportContractOfEmploymentDocx,
   exportEndorsementLetterDocx,
+  exportRelieverContractDocx,
   exportRequirementsListDocx,
   exportCOEWithPurposeDocx,
   exportCOEResignedDocx,
@@ -19,17 +21,7 @@ import {
   downloadEmployeeCOEFile,
   deleteEmployeeCOEFile,
 } from "@/lib/docExport";
-import {
-  Button,
-  Card,
-  Checkbox,
-  FieldGroup,
-  Input,
-  Pill,
-  SectionHeading,
-  StatusSelect,
-  Textarea,
-} from "@/components/ui";
+import { Button, Card, Checkbox, FieldGroup, FileButton, Input, Pill, SectionHeading, StatusSelect, Textarea } from "@/components/ui";
 import {
   EMPLOYMENT_MILESTONE_MONTHS,
   EMPLOYMENT_MILESTONE_LABELS,
@@ -118,6 +110,15 @@ export default function EmployeeDetailPage({
   const [draggedItemId, setDraggedItemId] = useState<string | null>(null);
   const [dragOverItemId, setDragOverItemId] = useState<string | null>(null);
   const [newCategoryTitle, setNewCategoryTitle] = useState("");
+  /** The blank Reliever Contract, uploaded once as PDF and reused for everyone. */
+  const { items: relieverTemplates, setItems: setRelieverTemplates } = useSupabaseStore<{
+    id: string;
+    dataUrl: string;
+    fileName: string;
+    uploadedAt: string;
+  }>("hr_reliever_template", []);
+  const relieverTemplate = relieverTemplates[0];
+  const [buildingContract, setBuildingContract] = useState(false);
   const { notify } = useNotifications();
   const router = useRouter();
 
@@ -1083,29 +1084,119 @@ export default function EmployeeDetailPage({
             </div>
           </div>
 
-          <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
+          {/* Four equal columns rather than three, so the set fills one tidy row instead of
+              leaving an orphan on a second line. Buttons wrap their label and grow in height
+              rather than stretching their column, which is what made the widths uneven. */}
+          <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
             <Button
               variant="ghost"
-              className="w-full justify-center text-center"
+              className="w-full min-w-0 justify-center whitespace-normal text-center leading-snug h-auto py-2"
               onClick={() => exportRequirementsListDocx(employee)}
             >
-              Download Employee 201 File Checklist (Word)
+              Employee 201 Checklist (Word)
             </Button>
             <Button
               variant="ghost"
-              className="w-full justify-center text-center"
+              className="w-full min-w-0 justify-center whitespace-normal text-center leading-snug h-auto py-2"
               onClick={() => exportEndorsementLetterDocx(employee)}
             >
-              Download BDO Endorsement Letter
+              BDO Endorsement Letter (Word)
             </Button>
             <Button
               variant="ghost"
-              className="w-full justify-center text-center"
+              className="w-full min-w-0 justify-center whitespace-normal text-center leading-snug h-auto py-2"
+              disabled={!employee.isReliever || buildingContract}
+              title={
+                employee.isReliever
+                  ? "Fills the Temporary Employment Contract from this reliever engagement"
+                  : "Only for employees marked as a reliever"
+              }
+              onClick={async () => {
+                setBuildingContract(true);
+                try {
+                  // A PDF template is filled here and downloaded as PDF; with no PDF on
+                  // file it falls back to the Word template, which produces a .docx.
+                  if (relieverTemplate) {
+                    const result = await buildRelieverContractPdf(relieverTemplate.dataUrl, employee);
+                    const blob = new Blob([new Uint8Array(result.bytes)], { type: "application/pdf" });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = relieverContractFileName(employee.name);
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    URL.revokeObjectURL(url);
+                    notify(
+                      result.missing.length
+                        ? `Downloaded, but these placeholders were not found in the template: ${result.missing.join(", ")}`
+                        : `Temporary Contract ready for ${employee.name}`,
+                      result.missing.length ? "warn" : "created"
+                    );
+                  } else {
+                    const result = await exportRelieverContractDocx(employee);
+                    if (result.found !== result.expected) {
+                      notify(
+                        `Downloaded, but the template has ${result.found} highlighted fields and this contract expects ${result.expected}.`,
+                        "warn"
+                      );
+                    } else {
+                      notify(`Temporary Contract ready for ${employee.name}`, "created");
+                    }
+                  }
+                } catch (err) {
+                  notify(
+                    `Could not build the contract: ${err instanceof Error ? err.message : "Unknown error"}`,
+                    "warn"
+                  );
+                } finally {
+                  setBuildingContract(false);
+                }
+              }}
+            >
+              {buildingContract ? "Building…" : "Temporary Contract"}
+            </Button>
+            <Button
+              variant="ghost"
+              className="w-full min-w-0 justify-center whitespace-normal text-center leading-snug h-auto py-2"
               onClick={() => exportContractOfEmploymentDocx(employee)}
             >
-              Download Contract of Employment (Word)
+              Contract of Employment (Word)
             </Button>
           </div>
+
+          {employee.isReliever && (
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border border-border bg-background px-3 py-2">
+              {/* The label takes the room that is left and the button keeps its size, so
+                  the two sit on one line and the button lines up with the row's edge. */}
+              <span className="min-w-0 flex-1 text-xs leading-snug text-ink-muted">
+                {relieverTemplate
+                  ? `Reliever Contract template: ${relieverTemplate.fileName}`
+                  : "No Reliever Contract template uploaded yet — upload the blank PDF form."}
+              </span>
+              <FileButton
+                accept=".pdf"
+                onFile={async (file) => {
+                  if (file.size > 8 * 1024 * 1024) {
+                    notify("That file is over 8MB — save a lighter PDF and try again.", "warn");
+                    return;
+                  }
+                  const dataUrl = await new Promise<string>((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(String(reader.result));
+                    reader.onerror = () => reject(new Error("read failed"));
+                    reader.readAsDataURL(file);
+                  });
+                  setRelieverTemplates([
+                    { id: "template", dataUrl, fileName: file.name, uploadedAt: todayISO() },
+                  ]);
+                  notify(`Reliever Contract template saved (${file.name})`, "created");
+                }}
+              >
+                {relieverTemplate ? "Replace template" : "Upload template"}
+              </FileButton>
+            </div>
+          )}
 
           <div className="mt-4 flex flex-col gap-5">
             {onboardingCategories.length === 0 && (

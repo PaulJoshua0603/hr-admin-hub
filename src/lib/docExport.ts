@@ -1,4 +1,5 @@
 import {
+  DEFAULT_WORK_LOCATION,
   Employee,
   getLackingRequirements,
   PRE_EMPLOYMENT_CHECKLIST_LABELS,
@@ -285,6 +286,13 @@ function replaceHighlightedBlocksSequential(xml: string, replacements: string[])
     i++;
     return val === undefined ? match : val;
   });
+}
+
+/** How many yellow-highlighted blocks a template holds, for checking it still lines up. */
+function countHighlightedBlocks(xml: string): number {
+  const pattern =
+    /(?:<w:r(?: [^>]*)?><w:rPr>(?:(?!<\/w:rPr>)[\s\S])*?<w:highlight w:val="yellow"\/>(?:(?!<\/w:rPr>)[\s\S])*?<\/w:rPr>(?:(?!<\/w:r>)[\s\S])*?<\/w:r>)+/g;
+  return (xml.match(pattern) || []).length;
 }
 
 /** "9th of September 2026" style ordinal date. */
@@ -629,6 +637,137 @@ export async function exportContractOfEmploymentDocx(employee: Employee) {
 
 function todayISOString(): string {
   return new Date().toISOString();
+}
+
+/** Splits "7:30 AM to 4:30 PM" (or an en-dash form) into its two halves. */
+function splitWorkingHours(shift?: string): [string, string] {
+  const raw = (shift || "").trim();
+  if (!raw) return ["", ""];
+  const parts = raw.split(/\s+to\s+|[–—-]/i).map((p) => p.trim()).filter(Boolean);
+  return [parts[0] || "", parts[1] || ""];
+}
+
+/**
+ * The yellow fields of the Temporary Employment Contract (Reliever), in the order Word
+ * lays them out. The filler walks the template's highlighted runs in document order, so
+ * this list is the contract's spec — keep it in step with the template.
+ */
+export const RELIEVER_CONTRACT_FIELDS = [
+  "Page 1 — date of agreement (hire date)",
+  "Page 1 — employee full name",
+  "Page 1 — home address and city",
+  "Page 1 — employee position",
+  "Page 1 — name of the employee being replaced",
+  "Page 2 — covered from (hire date)",
+  "Page 2 — covered until (end of contract)",
+  "Page 2 — position being covered",
+  "Page 2 — reason for coverage",
+  "Page 2 — job duties",
+  "Page 2 — work location",
+  "Page 2 — employment commences on",
+  "Page 2 — continues from",
+  "Page 2 — until (end of contract)",
+  "Page 3 — basic salary",
+  "Page 3 — total monthly gross compensation",
+  "Page 3 — working hours from",
+  "Page 3 — working hours to",
+  "Page 5 — employee full name",
+] as const;
+
+export async function uploadRelieverContractTemplate(file: File) {
+  if (!supabaseReady) return { error: "Connect Supabase to host a custom template." };
+  const { error } = await supabase.storage
+    .from("files")
+    .upload("templates/reliever-contract.docx", file, { upsert: true });
+  return { error: error?.message || null };
+}
+
+export type RelieverContractResult = { expected: number; found: number };
+
+/**
+ * Fills the Temporary Employment Contract (Reliever) from the employee record and saves
+ * it as Word. Only the highlighted placeholders are touched — the layout, wording and
+ * branding of the template come through untouched.
+ *
+ * Returns how many highlighted blocks the template actually had, so the caller can warn
+ * when a re-edited template no longer lines up rather than handing over a contract with
+ * values in the wrong blanks.
+ */
+/**
+ * A .docx is a zip, so its first two bytes are "PK". When a template has not been
+ * uploaded the fetch falls through to the app's own 404 page and hands back HTML, which
+ * JSZip reports as "Can't find end of central directory" — true, but useless to whoever
+ * pressed the button. This turns that into something actionable.
+ */
+async function assertDocxTemplate(blob: Blob, label: string) {
+  const head = new Uint8Array(await blob.slice(0, 2).arrayBuffer());
+  if (head[0] !== 0x50 || head[1] !== 0x4b) {
+    throw new Error(
+      `The ${label} template has not been uploaded yet. Upload the Word (.docx) version of the form, then try again.`
+    );
+  }
+}
+
+export async function exportRelieverContractDocx(employee: Employee): Promise<RelieverContractResult> {
+  let blob: Blob;
+  if (supabaseReady) {
+    const { data } = await supabase.storage.from("files").download("templates/reliever-contract.docx");
+    blob = data || (await fetch("/templates/reliever-contract.docx").then((r) => r.blob()));
+  } else {
+    blob = await fetch("/templates/reliever-contract.docx").then((r) => r.blob());
+  }
+  await assertDocxTemplate(blob, "Reliever Contract");
+
+  const JSZip = (await import("jszip")).default;
+  const zip = await JSZip.loadAsync(blob);
+  const docPath = "word/document.xml";
+  const file = zip.file(docPath);
+  if (!file) {
+    saveBlob(blob, `${employee.name}-Reliever Contract.docx`);
+    return { expected: RELIEVER_CONTRACT_FIELDS.length, found: 0 };
+  }
+
+  let xml = await file.async("text");
+
+  const longDate = (iso?: string) => (iso ? formatDate(iso, "MMMM d, yyyy") : "");
+  const hireDate = longDate(employee.dateHired);
+  const endDate = longDate(employee.relieverEndDate);
+  // "174 Taal St. Grp 2 Post Proper Southside, Taguig City"
+  const address = [employee.homeAddress, employee.homeCity].map((p) => (p || "").trim()).filter(Boolean).join(", ");
+  const [hoursFrom, hoursTo] = splitWorkingHours(employee.workingHours);
+
+  const values = [
+    hireDate,
+    employee.name || "",
+    address,
+    employee.position || "",
+    employee.replacedEmployeeName || "",
+    hireDate,
+    endDate,
+    employee.replacedPosition || "",
+    employee.relieverReason || "",
+    employee.replacedJobDuties || "",
+    employee.workLocation || DEFAULT_WORK_LOCATION,
+    hireDate,
+    hireDate,
+    endDate,
+    employee.basicSalary || "0.00",
+    employee.totalMonthlyGrossCompensation || "0.00",
+    hoursFrom,
+    hoursTo,
+    employee.name || "",
+  ];
+
+  const found = countHighlightedBlocks(xml);
+  xml = replaceHighlightedBlocksSequential(xml, values.map((v) => buildRun(v)));
+
+  zip.file(docPath, xml);
+  const outBlob = await zip.generateAsync({
+    type: "blob",
+    mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  });
+  saveBlob(outBlob, `${employee.name}-Reliever Contract.docx`);
+  return { expected: values.length, found };
 }
 
 export async function uploadContractTemplate(file: File) {

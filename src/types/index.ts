@@ -278,7 +278,7 @@ export const RESIGNED_STATUS_LABELS: Record<ResignedStatus, string> = {
 export type MilestoneNote = {
   id: string; // `${employeeId}-${milestoneType}` composite key
   employeeId: string;
-  milestoneType: "birthday" | "third" | "sixth" | "oneYear";
+  milestoneType: "birthday" | "relieverEnd" | "third" | "sixth" | "oneYear";
   note: string;
 };
 
@@ -391,6 +391,10 @@ export function defaultOnboardingChecklist(): OnboardingChecklistCategory[] {
   ];
 }
 
+/** The office address offered as the ready-made choice on a reliever contract. */
+export const DEFAULT_WORK_LOCATION =
+  "15F Four/Neo 4th Avenue corner 30th and 31st Streets, Bonifacio Global City, Taguig City";
+
 export type Employee = {
   id: string;
   name: string;
@@ -437,6 +441,21 @@ export type Employee = {
   gender?: string;
   immediateSupervisor?: string;
   workingHours?: string;
+  // Reliever engagement. Only meaningful when isReliever is true; the temporary contract
+  // and the end-of-contract milestone are both driven from these.
+  isReliever?: boolean;
+  /** Last day of the reliever assignment. */
+  relieverEndDate?: string; // ISO date
+  /** Who this employee is standing in for. */
+  replacedEmployeeName?: string;
+  /** Why the cover is needed, printed as "Reason for Coverage". */
+  relieverReason?: string;
+  /** Position being covered, which need not match the reliever's own title. */
+  replacedPosition?: string;
+  /** Duties of the position being covered, printed under Scope of Work. */
+  replacedJobDuties?: string;
+  /** Where the reliever works — the office address by default, or anything typed in. */
+  workLocation?: string;
 };
 
 export const REQUIREMENT_LABELS: Record<RequirementKey, string> = {

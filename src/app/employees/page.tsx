@@ -18,24 +18,31 @@ import {
   StatCard,
   StatusSelect,
   TableWrap,
+  Textarea,
   ToolbarDivider,
 } from "@/components/ui";
 import {
+  DEFAULT_WORK_LOCATION,
+  defaultOnboardingChecklist,
   emptyPreEmploymentChecklist,
   emptyRequirements,
   getLackingRequirements,
   getMissingCriticalItems,
-  defaultOnboardingChecklist,
-  type Employee,
-  type MilestoneNote,
   type COERequest,
-  type ER2ReportRow,
-  type RegularizationReportRow,
-  type EventReportRow,
-  type PlanReportRow,
   type CustomReportTable,
+  type Employee,
+  type ER2ReportRow,
+  type EventReportRow,
+  type MilestoneNote,
+  type PlanReportRow,
+  type RegularizationReportRow,
 } from "@/types";
 import { useNotifications } from "@/lib/notificationContext";
+import {
+  buildPerformanceEvaluation,
+  downloadPdfBytes,
+  performanceEvaluationFileName,
+} from "@/lib/performanceEval";
 import {
   countableEmployees,
   groupEmployees,
@@ -113,6 +120,13 @@ export default function EmployeesPage() {
   const [middleName, setMiddleName] = useState("");
   /** Set once the full name is typed over, so editing the parts stops overwriting it. */
   const [nameEdited, setNameEdited] = useState(false);
+  const [isReliever, setIsReliever] = useState(false);
+  const [relieverEndDate, setRelieverEndDate] = useState("");
+  const [replacedEmployeeName, setReplacedEmployeeName] = useState("");
+  const [relieverReason, setRelieverReason] = useState("");
+  const [replacedPosition, setReplacedPosition] = useState("");
+  const [replacedJobDuties, setReplacedJobDuties] = useState("");
+  const [workLocation, setWorkLocation] = useState(DEFAULT_WORK_LOCATION);
   const [position, setPosition] = useState("");
   const [department, setDepartment] = useState("");
   const [dateSent, setDateSent] = useState(todayISO().slice(0, 10));
@@ -278,6 +292,14 @@ export default function EmployeesPage() {
       lastName: lastName.trim() || undefined,
       position: position.trim() || undefined,
       department: department.trim() || undefined,
+      // Only carried when this is a reliever, so an ordinary hire keeps a clean record.
+      isReliever: isReliever || undefined,
+      relieverEndDate: isReliever && relieverEndDate ? new Date(relieverEndDate).toISOString() : undefined,
+      replacedEmployeeName: isReliever ? replacedEmployeeName.trim() || undefined : undefined,
+      relieverReason: isReliever ? relieverReason.trim() || undefined : undefined,
+      replacedPosition: isReliever ? replacedPosition.trim() || undefined : undefined,
+      replacedJobDuties: isReliever ? replacedJobDuties.trim() || undefined : undefined,
+      workLocation: isReliever ? workLocation.trim() || undefined : undefined,
       dateAdded,
       dateRequirementsSent: sentISO,
       dateHired: dateHired ? new Date(dateHired).toISOString() : undefined,
@@ -293,6 +315,13 @@ export default function EmployeesPage() {
     setFirstName("");
     setMiddleName("");
     setNameEdited(false);
+    setIsReliever(false);
+    setRelieverEndDate("");
+    setReplacedEmployeeName("");
+    setRelieverReason("");
+    setReplacedPosition("");
+    setReplacedJobDuties("");
+    setWorkLocation(DEFAULT_WORK_LOCATION);
     setPosition("");
     setDepartment("");
     setDateSent(todayISO().slice(0, 10));
@@ -941,6 +970,88 @@ export default function EmployeesPage() {
               />
             </label>
           </div>
+          <label className="mt-4 flex items-center gap-2 text-sm text-ink">
+            <input
+              type="checkbox"
+              checked={isReliever}
+              onChange={(e) => setIsReliever(e.target.checked)}
+              className="h-4 w-4 rounded border-border accent-accent"
+            />
+            Reliever — this employee is temporarily covering for someone
+          </label>
+
+          {isReliever && (
+            <div className="mt-3 grid gap-3 rounded-lg border border-border bg-background p-3 sm:grid-cols-2">
+              <label className="flex flex-col gap-1 text-xs text-ink-muted">
+                End date of the reliever assignment
+                <Input
+                  type="date"
+                  value={relieverEndDate}
+                  onChange={(e) => setRelieverEndDate(e.target.value)}
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-xs text-ink-muted">
+                Employee being replaced
+                <EmployeeNameInput
+                  placeholder="Full name of the employee being covered"
+                  value={replacedEmployeeName}
+                  onChange={setReplacedEmployeeName}
+                  onSelect={(picked) => {
+                    setReplacedEmployeeName(picked.name);
+                    // The position being covered is that employee's own, so it is filled
+                    // in — but only when blank, never over something already typed.
+                    if (!replacedPosition.trim() && picked.position) setReplacedPosition(picked.position);
+                  }}
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-xs text-ink-muted">
+                Position being replaced
+                <Input
+                  placeholder="e.g. Quantity Surveyor"
+                  value={replacedPosition}
+                  onChange={(e) => setReplacedPosition(e.target.value)}
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-xs text-ink-muted">
+                Reason for the replacement
+                <Input
+                  placeholder="e.g. Maternity leave"
+                  value={relieverReason}
+                  onChange={(e) => setRelieverReason(e.target.value)}
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-xs text-ink-muted sm:col-span-2">
+                Job duties of the position being replaced
+                <Textarea
+                  rows={3}
+                  placeholder="Printed under Scope of Work on the temporary contract"
+                  value={replacedJobDuties}
+                  onChange={(e) => setReplacedJobDuties(e.target.value)}
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-xs text-ink-muted sm:col-span-2">
+                Work location
+                <select
+                  value={workLocation === DEFAULT_WORK_LOCATION ? DEFAULT_WORK_LOCATION : "other"}
+                  onChange={(e) =>
+                    setWorkLocation(e.target.value === DEFAULT_WORK_LOCATION ? DEFAULT_WORK_LOCATION : "")
+                  }
+                  className="h-9 rounded-lg border border-border bg-surface px-3 text-sm text-ink"
+                >
+                  <option value={DEFAULT_WORK_LOCATION}>{DEFAULT_WORK_LOCATION}</option>
+                  <option value="other">Other — type it below</option>
+                </select>
+                {workLocation !== DEFAULT_WORK_LOCATION && (
+                  <Input
+                    placeholder="Type the work location"
+                    value={workLocation}
+                    onChange={(e) => setWorkLocation(e.target.value)}
+                  />
+                )}
+              </label>
+            </div>
+          )}
+
           <p className="mt-2 text-xs text-ink-muted">
             Full Name fills in from Last / First / Middle as &ldquo;First M. Last&rdquo; — type over
             it if this person is written differently. The three names are stored separately so the
@@ -1144,7 +1255,7 @@ function EmployeeCountSummary({ employees }: { employees: Employee[] }) {
 }
 
 type FilterCategory = "milestones" | "activeResigned" | "newHires";
-type MilestoneType = "birthday" | "third" | "sixth" | "oneYear";
+type MilestoneType = "birthday" | "relieverEnd" | "third" | "sixth" | "oneYear";
 type TimeframePreset = "week" | "month" | "year" | "custom";
 
 type FilterRow = {
@@ -1202,6 +1313,7 @@ function spelledOut(iso: string): string {
 
 const MILESTONE_LABELS: Record<MilestoneType, string> = {
   birthday: "Birthday",
+  relieverEnd: "End of Reliever Contract",
   third: "3rd Month",
   sixth: "6th Month",
   oneYear: "1 Year",
@@ -1258,6 +1370,67 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
 
   // Shared classification — the same split the Employees count cards use.
   const coeIndex = resignedCoeIndex(coeRequests);
+
+  // The blank Performance Evaluation form, uploaded once and reused for everyone.
+  const { items: perfTemplates, setItems: setPerfTemplates } = useSupabaseStore<{
+    id: string;
+    dataUrl: string;
+    fileName: string;
+    uploadedAt: string;
+  }>("hr_perf_eval_template", []);
+  const perfTemplate = perfTemplates[0];
+  const [perfBusyId, setPerfBusyId] = useState<string | null>(null);
+
+  async function uploadPerfTemplate(file: File) {
+    if (file.size > 8 * 1024 * 1024) {
+      notify("That file is over 8MB — save a lighter PDF and try again.", "warn");
+      return;
+    }
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(new Error("read failed"));
+      reader.readAsDataURL(file);
+    });
+    setPerfTemplates([
+      { id: "template", dataUrl, fileName: file.name, uploadedAt: todayISO() },
+    ]);
+    notify(`Performance Evaluation template saved (${file.name})`, "created");
+  }
+
+  /** Fills the template for one employee and downloads it under their name. */
+  async function downloadPerfEval(row: FilterRow) {
+    if (!perfTemplate) {
+      notify("Upload the blank Performance Evaluation PDF first.", "warn");
+      return;
+    }
+    const employee = employees.find((e) => e.id === row.id);
+    if (!employee) return;
+    setPerfBusyId(row.id);
+    try {
+      const result = await buildPerformanceEvaluation(perfTemplate.dataUrl, {
+        fullName: employee.name,
+        department: employee.department || "",
+        position: employee.position || "",
+        dateEmployed: employee.dateHired ? formatDate(employee.dateHired, "MMMM d, yyyy") : "",
+        // The "To" of the period covered is the 6th-month milestone shown in this table.
+        sixthMonth: formatDate(row.date, "MMMM d, yyyy"),
+      });
+      downloadPdfBytes(result.bytes, performanceEvaluationFileName(employee.name));
+      if (result.missing.length > 0) {
+        notify(
+          `Downloaded, but these fields were not found in the template: ${result.missing.join(", ")}. Check it is the blank form.`,
+          "warn"
+        );
+      } else {
+        notify(`Performance Evaluation ready for ${employee.name}`, "created");
+      }
+    } catch (err) {
+      notify(`Could not build the form: ${err instanceof Error ? err.message : "Unknown error"}`, "warn");
+    } finally {
+      setPerfBusyId(null);
+    }
+  }
 
   // Headcounts are taken over real people only; the admin account and any placeholder
   // rows left by a test import are set aside so these cards match the HR export.
@@ -1359,7 +1532,22 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
           };
         });
     }
-    const monthsMap: Record<MilestoneType, number> = { birthday: 0, third: 3, sixth: 6, oneYear: 12 };
+    if (milestoneType === "relieverEnd") {
+      // Driven by the date entered on the reliever engagement, not by the hire date.
+      return employees
+        .filter((e) => e.isReliever && e.relieverEndDate && !e.lastDay)
+        .map((e) => ({
+          id: e.id,
+          name: e.name,
+          position: e.position || "",
+          department: e.department || "",
+          email: e.realcognitaEmail || "",
+          supervisor: e.immediateSupervisor || "",
+          date: new Date(e.relieverEndDate!).toISOString(),
+        }))
+        .filter((r) => inRange(r.date, startDate, endDate));
+    }
+    const monthsMap: Record<MilestoneType, number> = { birthday: 0, relieverEnd: 0, third: 3, sixth: 6, oneYear: 12 };
     const months = monthsMap[milestoneType];
     return employees
       .filter((e) => e.dateHired && !e.lastDay)
@@ -1653,7 +1841,14 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
             .filter((r) => inRange(r.date, startDate, endDate))
             .sort((a, b) => (a.date < b.date ? -1 : 1));
         }
-        const monthsMap: Record<MilestoneType, number> = { birthday: 0, third: 3, sixth: 6, oneYear: 12 };
+        if (type === "relieverEnd") {
+          return employees
+            .filter((e) => e.isReliever && e.relieverEndDate && !e.lastDay)
+            .map((e) => toFilterRow(e, new Date(e.relieverEndDate!).toISOString()))
+            .filter((r) => inRange(r.date, startDate, endDate))
+            .sort((a, b) => (a.date < b.date ? 1 : -1));
+        }
+        const monthsMap: Record<MilestoneType, number> = { birthday: 0, relieverEnd: 0, third: 3, sixth: 6, oneYear: 12 };
         return employees
           .filter((e) => e.dateHired && !e.lastDay)
           .map((e) => {
@@ -1674,6 +1869,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
       }
 
       buildSheet("Birthdays", "birthday", computeRowsFor("birthday"));
+      buildSheet("End of Reliever Contract", "relieverEnd", computeRowsFor("relieverEnd"));
       buildSheet("3rd Month", "third", computeRowsFor("third"));
       buildSheet("6th Month", "sixth", computeRowsFor("sixth"));
       buildSheet("1 Year", "oneYear", computeRowsFor("oneYear"));
@@ -1736,6 +1932,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
               <div className="flex gap-1 rounded-lg bg-background p-1 w-fit">
                 {([
                   { id: "birthday" as const, label: "Birthdays" },
+                  { id: "relieverEnd" as const, label: "End of Reliever Contract" },
                   { id: "third" as const, label: "3rd Month" },
                   { id: "sixth" as const, label: "6th Month" },
                   { id: "oneYear" as const, label: "1 Year" },
@@ -1905,6 +2102,23 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
             </>
           ) : (
             <>
+              {milestoneType === "sixth" && isMilestoneView && (
+                <div className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-background px-3 py-2">
+                  <span className="text-xs text-ink-muted">
+                    {perfTemplate
+                      ? `Performance Evaluation template: ${perfTemplate.fileName}`
+                      : "No Performance Evaluation template uploaded yet."}
+                  </span>
+                  <FileButton
+                    accept=".pdf"
+                    onFile={uploadPerfTemplate}
+                    title="Upload the blank Performance Evaluation PDF — only the highlighted fields are replaced"
+                  >
+                    {perfTemplate ? "Replace template" : "Import template (PDF)"}
+                  </FileButton>
+                </div>
+              )}
+
               <p className="mt-4 text-sm font-medium text-ink">Total Employees: {rows.length}</p>
 
               {rows.length === 0 ? (
@@ -1919,9 +2133,13 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                         <th className="px-3 py-2">Employee Name</th>
                         <th className="px-3 py-2">Position</th>
                         <th className="px-3 py-2">Department</th>
+                        <th className="px-3 py-2">Immediate Supervisor</th>
                         <th className="px-3 py-2">Email</th>
                         <th className="px-3 py-2">{dateColumnLabel}</th>
                         {isMilestoneView && <th className="px-3 py-2">Notes</th>}
+                        {milestoneType === "sixth" && isMilestoneView && (
+                          <th className="px-3 py-2">Performance Evaluation</th>
+                        )}
                       </tr>
                     </thead>
                     <tbody>
@@ -1934,6 +2152,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                           </td>
                           <td className="px-3 py-2 text-ink-muted">{r.position || "—"}</td>
                           <td className="px-3 py-2 text-ink-muted">{r.department || "—"}</td>
+                          <td className="px-3 py-2 text-ink-muted">{r.supervisor || "—"}</td>
                           <td className="px-3 py-2 text-ink-muted">{r.email || "—"}</td>
                           <td className="px-3 py-2 text-ink-muted">{formatDate(r.date, "MMMM d, yyyy")}</td>
                           {isMilestoneView && (
@@ -1956,6 +2175,18 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                                   className="min-w-[160px]"
                                 />
                               )}
+                            </td>
+                          )}
+                          {milestoneType === "sixth" && isMilestoneView && (
+                            <td className="px-3 py-2">
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                disabled={!perfTemplate || perfBusyId === r.id}
+                                onClick={() => downloadPerfEval(r)}
+                              >
+                                {perfBusyId === r.id ? "Building…" : "Download"}
+                              </Button>
                             </td>
                           )}
                         </tr>

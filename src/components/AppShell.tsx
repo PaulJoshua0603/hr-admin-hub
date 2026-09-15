@@ -11,13 +11,11 @@ import ThemeToggle from "@/components/ThemeToggle";
 import GlobalSearch from "@/components/GlobalSearch";
 import { useAuth } from "@/lib/authContext";
 import {
-  CalendarIcon,
   ClockIcon,
-  DashboardIcon,
   EmployeesIcon,
+  ExternalLinkIcon,
   LogoutIcon,
   ReportsIcon,
-  TasksIcon,
 } from "@/components/icons";
 
 /**
@@ -85,11 +83,17 @@ function HeaderClock() {
 }
 
 const NAV = [
-  { href: "/", label: "Dashboard", icon: DashboardIcon },
-  { href: "/tasks", label: "Notes", icon: TasksIcon },
   { href: "/employees", label: "Employees", icon: EmployeesIcon },
   { href: "/reports", label: "Reports", icon: ReportsIcon },
-  { href: "/calendar", label: "Calendar", icon: CalendarIcon },
+  // Sprout refuses to be displayed inside another site (X-Frame-Options: SAMEORIGIN on
+  // every response, its SSO redirects included), so this entry opens it in its own tab
+  // rather than routing to a page here that could only ever show an empty frame.
+  {
+    href: "https://realcognitainc.hrhub.ph",
+    label: "Sprout",
+    icon: ExternalLinkIcon,
+    external: true as const,
+  },
 ];
 
 const PUBLIC_ROUTES = ["/login", "/register", "/forgot-password", "/reset-password"];
@@ -153,13 +157,16 @@ function ProtectedShell({ children }: { children: React.ReactNode }) {
               </p>
               <nav className="flex flex-col gap-1">
                 {NAV.map((item) => {
+                  const external = "external" in item && item.external;
                   const active =
-                    item.href === "/" ? pathname === "/" : pathname?.startsWith(item.href);
+                    external ? false : item.href === "/" ? pathname === "/" : pathname?.startsWith(item.href);
                   const Icon = item.icon;
+                  const LinkTag = (external ? "a" : Link) as typeof Link;
                   return (
-                    <Link
+                    <LinkTag
                       key={item.href}
                       href={item.href}
+                      {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
                       className={`group relative flex items-center gap-2.5 overflow-hidden rounded-xl px-3 py-2.5 text-sm transition-all duration-200 ${
                         active
                           ? "bg-accent font-medium text-white shadow-md shadow-accent/25"
@@ -173,7 +180,8 @@ function ProtectedShell({ children }: { children: React.ReactNode }) {
                         } group-hover:scale-110`}
                       />
                       <span className="truncate">{item.label}</span>
-                    </Link>
+                      {external && <span className="ml-auto shrink-0 text-xs opacity-60">↗</span>}
+                    </LinkTag>
                   );
                 })}
               </nav>
@@ -231,20 +239,23 @@ function MobileNav({ pathname }: { pathname: string | null }) {
   return (
     <nav className="flex gap-1 overflow-x-auto md:hidden">
       {NAV.map((item) => {
+        const external = "external" in item && item.external;
         const active =
-          item.href === "/" ? pathname === "/" : pathname?.startsWith(item.href);
+          external ? false : item.href === "/" ? pathname === "/" : pathname?.startsWith(item.href);
         const Icon = item.icon;
+        const LinkTag = (external ? "a" : Link) as typeof Link;
         return (
-          <Link
+          <LinkTag
             key={item.href}
             href={item.href}
+            {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
             className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-1.5 text-sm transition-colors ${
               active ? "bg-accent font-medium text-white" : "text-ink-muted"
             }`}
           >
             <Icon size={15} />
             {item.label}
-          </Link>
+          </LinkTag>
         );
       })}
     </nav>

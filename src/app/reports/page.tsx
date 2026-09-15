@@ -37,6 +37,7 @@ export default function ReportsPage() {
         <PlanTable />
         <CustomTablesSection />
         <ReportExportSection />
+        
       </div>
     </div>
   );
