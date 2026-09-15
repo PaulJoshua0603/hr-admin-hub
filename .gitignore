@@ -42,3 +42,6 @@ next-env.d.ts
 
 # Local data snapshots — contain employee records, never commit
 hr_employees-backup.json
+
+.vercel
+.env*
