@@ -10,6 +10,8 @@ export type DirectoryEntry = {
   position: string;
   department: string;
   email: string;
+  /** Needed so a report can derive an employment milestone without a second fetch. */
+  dateHired: string;
 };
 
 const STORE_KEY = "hr_employees";
@@ -32,6 +34,7 @@ function toEntries(employees: Employee[]): DirectoryEntry[] {
       position: e.position || "",
       department: e.department || "",
       email: e.realcognitaEmail || "",
+      dateHired: e.dateHired || "",
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }

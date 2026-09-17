@@ -215,15 +215,15 @@ export function ReportExportSection() {
           "Confirmation of Regularization",
           [26, 24, 20, 22, 18],
           "Confirmation of Regularization Report",
-          ["Employee Name", "Position", "Department", "Date of Regularization", "Date Created"]
+          ["Employee Name", "Position", "Department", "Date Created", "Date of Regularization"]
         );
         reg.forEach((r) =>
           s.addRow([
             r.employeeName,
             r.position,
             r.department,
-            formatDate(r.dateOfRegularization, "MMMM d, yyyy"),
             formatDate(r.dateCreated, "MMMM d, yyyy"),
+            formatDate(r.dateOfRegularization, "MMMM d, yyyy"),
           ])
         );
         addTotal(s, reg.length, "Employee");

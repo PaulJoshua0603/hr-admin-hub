@@ -7,8 +7,8 @@ import type { Employee, ER2Entry } from "@/types";
  *
  *   PhilHealth no.      01-250472813-5
  *   Name of employee    BAYANI, HAZEL ENTERIA
- *   Salary              ₱25,000.00
- *   Date of employment  SEPTEMBER 01, 2026
+ *   Salary              ₱25,000.00   (total monthly gross, not basic)
+ *   Date of employment  SEPTEMBER 01, 2026   (hired / onboarding date)
  */
 
 /** 12 digits become XX-XXXXXXXXX-X; anything else is passed through as typed. */
@@ -76,7 +76,9 @@ export function er2EntryFromEmployee(e: Employee, id: string): ER2Entry {
     philhealthNo: formatPhilHealthNo(e.philhealthNo),
     name: formatEr2Name(e),
     position: (e.position || "").toUpperCase(),
-    salary: formatEr2Salary(e.basicSalary),
+    // PhilHealth premiums are computed on the whole monthly compensation, not on the
+    // basic pay alone, so the sheet carries the gross.
+    salary: formatEr2Salary(e.totalMonthlyGrossCompensation),
     dateOfEmployment: formatEr2Date(e.dateHired),
   };
 }

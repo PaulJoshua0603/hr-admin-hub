@@ -36,6 +36,7 @@ import {
   type MilestoneNote,
   type PlanReportRow,
   type RegularizationReportRow,
+  withNotesTaskListAdditions,
 } from "@/types";
 import { useNotifications } from "@/lib/notificationContext";
 import {
@@ -49,6 +50,7 @@ import {
   isAwaitingOnboarding,
   resignedCoeIndex,
   separationDate as separationDateOf,
+  separationReason,
 } from "@/lib/employeeStatus";
 import {
   SIXTH_MONTH_NOTE_REFERENCE,
@@ -113,6 +115,7 @@ export default function EmployeesPage() {
   const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
   const [confirmBulkComplete, setConfirmBulkComplete] = useState(false);
   const [confirmDateFix, setConfirmDateFix] = useState(false);
+  const [confirmTaskListSync, setConfirmTaskListSync] = useState(false);
   const [showDuplicates, setShowDuplicates] = useState(false);
   const [name, setName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -639,6 +642,24 @@ export default function EmployeesPage() {
     setConfirmBulkComplete(false);
   }
 
+  function bulkSyncTaskLists() {
+    let added = 0;
+    const updated = employees.map((e) => {
+      const before = (e.onboardingChecklist || []).reduce((n, c) => n + c.items.length, 0);
+      const onboardingChecklist = withNotesTaskListAdditions(e.onboardingChecklist || []);
+      added += onboardingChecklist.reduce((n, c) => n + c.items.length, 0) - before;
+      return { ...e, onboardingChecklist };
+    });
+    setItems(updated);
+    notify(
+      added
+        ? `Added ${added} missing task list item(s) across ${employees.length} employee(s)`
+        : "Every employee already has the full task list",
+      added ? "updated" : "info"
+    );
+    setConfirmTaskListSync(false);
+  }
+
   function bulkFixDateShift() {
     function plusOneDay(iso?: string): string | undefined {
       if (!iso) return iso;
@@ -735,6 +756,25 @@ export default function EmployeesPage() {
                 ) : (
                   <Button variant="ghost" onClick={() => setConfirmBulkComplete(true)}>
                     Mark all complete
+                  </Button>
+                )}
+
+                {confirmTaskListSync ? (
+                  <>
+                    <Button variant="danger" onClick={bulkSyncTaskLists}>
+                      Confirm add task list items
+                    </Button>
+                    <Button variant="ghost" onClick={() => setConfirmTaskListSync(false)}>
+                      Cancel
+                    </Button>
+                  </>
+                ) : (
+                  <Button
+                    variant="ghost"
+                    onClick={() => setConfirmTaskListSync(true)}
+                    title="Adds any standard Notes / Task List item an employee is missing, keeping their ticks and their own additions"
+                  >
+                    Sync onboarding task lists
                   </Button>
                 )}
 
@@ -1266,7 +1306,29 @@ type FilterRow = {
   email: string;
   supervisor: string;
   date: string; // ISO
+  /** Only on a Reliever Contract row: who and what the reliever is standing in for. */
+  replacedName?: string;
+  replacedReason?: string;
+  replacedPosition?: string;
+  /** Only on a Resigned row: why they left, when the system can say. */
+  reason?: string;
 };
+
+/**
+ * Orders a list of dates, putting the ones with no date last either way.
+ *
+ * Every one of these lists is read newest-first except the new hires, who are read
+ * soonest-first — nobody scrolls to the bottom to find who starts on Monday. A record with
+ * no date on it goes to the end regardless, because an empty string sorts before every
+ * real date and would otherwise head the list.
+ */
+function byDate(direction: "newest" | "soonest") {
+  return (a: { date: string }, b: { date: string }) => {
+    if (!a.date) return b.date ? 1 : 0;
+    if (!b.date) return -1;
+    return direction === "newest" ? (a.date < b.date ? 1 : -1) : a.date < b.date ? -1 : 1;
+  };
+}
 
 function inRange(iso: string, start: string, end: string): boolean {
   const d = iso.slice(0, 10);
@@ -1313,7 +1375,7 @@ function spelledOut(iso: string): string {
 
 const MILESTONE_LABELS: Record<MilestoneType, string> = {
   birthday: "Birthday",
-  relieverEnd: "End of Reliever Contract",
+  relieverEnd: "Reliever Contract",
   third: "3rd Month",
   sixth: "6th Month",
   oneYear: "1 Year",
@@ -1454,20 +1516,20 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
   // range above — these lists answer "who works here now", not "who changed this period".
   const activeRows: FilterRow[] = roster
     .filter((e) => separationDate(e) === null && !isAwaitingOnboarding(e))
-    .map((e) => toFilterRow(e, e.dateAdded))
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .map((e) => toFilterRow(e, e.dateHired || ""))
+    .sort(byDate("newest"));
 
   // Hired on paper but their onboarding date is still ahead of them.
   const newHireRows: FilterRow[] = roster
     .filter((e) => separationDate(e) === null && isAwaitingOnboarding(e))
     .map((e) => toFilterRow(e, e.dateHired!))
-    .sort((a, b) => (a.date < b.date ? -1 : 1));
+    .sort(byDate("soonest"));
 
   const resignedRows: FilterRow[] = roster
     .map((e) => ({ e, date: separationDate(e) }))
     .filter((x): x is { e: Employee; date: string } => x.date !== null)
-    .map(({ e, date }) => toFilterRow(e, date))
-    .sort((a, b) => (a.date < b.date ? 1 : -1));
+    .map(({ e, date }) => ({ ...toFilterRow(e, date), reason: separationReason(e, coeIndex) }))
+    .sort(byDate("newest"));
 
   // COE records naming someone who isn't in the employee list yet still belong here.
   const knownNames = new Set(roster.map((e) => e.name.trim().toLowerCase()));
@@ -1488,8 +1550,8 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
       };
     });
 
-  const allResignedRows: FilterRow[] = [...resignedRows, ...orphanResignedRows].sort((a, b) =>
-    a.date < b.date ? 1 : -1
+  const allResignedRows: FilterRow[] = [...resignedRows, ...orphanResignedRows].sort(
+    byDate("newest")
   );
 
   const rows: FilterRow[] = (() => {
@@ -1544,6 +1606,9 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
           email: e.realcognitaEmail || "",
           supervisor: e.immediateSupervisor || "",
           date: new Date(e.relieverEndDate!).toISOString(),
+          replacedName: e.replacedEmployeeName || "",
+          replacedReason: e.relieverReason || "",
+          replacedPosition: e.replacedPosition || "",
         }))
         .filter((r) => inRange(r.date, startDate, endDate));
     }
@@ -1568,8 +1633,13 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
   })().sort((a, b) => (a.date < b.date ? -1 : 1));
 
   const isMilestoneView = category === "milestones";
+  const isRelieverView = isMilestoneView && milestoneType === "relieverEnd";
   const dateColumnLabel =
-    category === "newHires" ? "Hired Date" : MILESTONE_LABELS[milestoneType];
+    category === "newHires"
+      ? "Hired Date"
+      : isRelieverView
+        ? "Reliever Contract End Date"
+        : MILESTONE_LABELS[milestoneType];
 
   function exportFileName(): string {
     const monday = new Date(startDate);
@@ -1606,13 +1676,20 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
    * dates fall in the selected range, and counting COE-for-Resigned records the same way.
    */
   function computeActiveResigned() {
-    const active = employees.filter(
-      (e) => separationDate(e) === null && !isAwaitingOnboarding(e)
-    );
-    const newHires = employees.filter(
-      (e) => separationDate(e) === null && isAwaitingOnboarding(e)
-    );
-    const resigned = employees.filter((e) => separationDate(e) !== null);
+    // Ordered exactly as the lists on screen are, so the sheet reads the same way.
+    const byHired = (direction: "newest" | "soonest") => (a: Employee, b: Employee) =>
+      byDate(direction)({ date: a.dateHired || "" }, { date: b.dateHired || "" });
+    const active = employees
+      .filter((e) => separationDate(e) === null && !isAwaitingOnboarding(e))
+      .sort(byHired("newest"));
+    const newHires = employees
+      .filter((e) => separationDate(e) === null && isAwaitingOnboarding(e))
+      .sort(byHired("soonest"));
+    const resigned = employees
+      .filter((e) => separationDate(e) !== null)
+      .sort((a, b) =>
+        byDate("newest")({ date: separationDate(a) || "" }, { date: separationDate(b) || "" })
+      );
     return { active, newHires, resigned };
   }
 
@@ -1631,13 +1708,25 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
         ws.mergeCells(activeTitle.number, 1, activeTitle.number, 5);
         activeTitle.getCell(1).font = { bold: true, color: { argb: "FF0A2E2A" } };
         activeTitle.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE4F0EE" } };
-        const activeHeader = ws.addRow(["Employee Name", "Position", "Department", "Email", "Date Added"]);
+        const activeHeader = ws.addRow([
+          "Employee Name",
+          "Position",
+          "Department",
+          "Email",
+          "Hired/Onboarding Date",
+        ]);
         activeHeader.eachCell((c) => {
           c.font = { bold: true, color: { argb: "FFFFFFFF" } };
           c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0E5E56" } };
         });
         active.forEach((e) =>
-          ws.addRow([e.name, e.position || "", e.department || "", e.realcognitaEmail || "", formatDate(e.dateAdded, "MMMM d, yyyy")])
+          ws.addRow([
+            e.name,
+            e.position || "",
+            e.department || "",
+            e.realcognitaEmail || "",
+            e.dateHired ? formatDate(e.dateHired, "MMMM d, yyyy") : "—",
+          ])
         );
         ws.addRow([]);
 
@@ -1662,10 +1751,17 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
         ws.addRow([]);
 
         const resignedTitle = ws.addRow([`Resigned Employees (${resigned.length})`]);
-        ws.mergeCells(resignedTitle.number, 1, resignedTitle.number, 5);
+        ws.mergeCells(resignedTitle.number, 1, resignedTitle.number, 6);
         resignedTitle.getCell(1).font = { bold: true, color: { argb: "FF0A2E2A" } };
         resignedTitle.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE4F0EE" } };
-        const resignedHeader = ws.addRow(["Employee Name", "Position", "Department", "Email", "Separation Date"]);
+        const resignedHeader = ws.addRow([
+          "Employee Name",
+          "Position",
+          "Department",
+          "Email",
+          "Separation Date",
+          "Reason",
+        ]);
         resignedHeader.eachCell((c) => {
           c.font = { bold: true, color: { argb: "FFFFFFFF" } };
           c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0E5E56" } };
@@ -1677,6 +1773,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
             e.department || "",
             e.realcognitaEmail || "",
             separationDate(e) ? formatDate(separationDate(e)!, "MMMM d, yyyy") : "—",
+            separationReason(e, coeIndex),
           ])
         );
         ws.addRow([]);
@@ -1794,13 +1891,19 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
           pattern: "solid",
           fgColor: { argb: "FFE4F0EE" },
         };
+        // A reliever sheet carries who the engagement covers; the others have nothing
+        // to put in those columns, so they are left off rather than added empty.
+        const relieverColumns = type === "relieverEnd";
         const headerRow = ws.addRow([
           "Employee Name",
           "Position",
           "Department",
           "Immediate Supervisor",
           "Email",
-          MILESTONE_LABELS[type],
+          ...(relieverColumns
+            ? ["Employee Being Replaced", "Reason for Replacement", "Position Being Replaced"]
+            : []),
+          relieverColumns ? "Reliever Contract End Date" : MILESTONE_LABELS[type],
           "Notes",
         ]);
         headerRow.eachCell((cell) => {
@@ -1814,6 +1917,9 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
             r.department,
             r.supervisor,
             r.email,
+            ...(relieverColumns
+              ? [r.replacedName || "", r.replacedReason || "", r.replacedPosition || ""]
+              : []),
             formatDate(r.date, "MMMM d, yyyy"),
             noteFor(r.id, type),
           ]);
@@ -1844,7 +1950,12 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
         if (type === "relieverEnd") {
           return employees
             .filter((e) => e.isReliever && e.relieverEndDate && !e.lastDay)
-            .map((e) => toFilterRow(e, new Date(e.relieverEndDate!).toISOString()))
+            .map((e) => ({
+              ...toFilterRow(e, new Date(e.relieverEndDate!).toISOString()),
+              replacedName: e.replacedEmployeeName || "",
+              replacedReason: e.relieverReason || "",
+              replacedPosition: e.replacedPosition || "",
+            }))
             .filter((r) => inRange(r.date, startDate, endDate))
             .sort((a, b) => (a.date < b.date ? 1 : -1));
         }
@@ -1869,7 +1980,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
       }
 
       buildSheet("Birthdays", "birthday", computeRowsFor("birthday"));
-      buildSheet("End of Reliever Contract", "relieverEnd", computeRowsFor("relieverEnd"));
+      buildSheet("Reliever Contract", "relieverEnd", computeRowsFor("relieverEnd"));
       buildSheet("3rd Month", "third", computeRowsFor("third"));
       buildSheet("6th Month", "sixth", computeRowsFor("sixth"));
       buildSheet("1 Year", "oneYear", computeRowsFor("oneYear"));
@@ -1932,7 +2043,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
               <div className="flex gap-1 rounded-lg bg-background p-1 w-fit">
                 {([
                   { id: "birthday" as const, label: "Birthdays" },
-                  { id: "relieverEnd" as const, label: "End of Reliever Contract" },
+                  { id: "relieverEnd" as const, label: "Reliever Contract" },
                   { id: "third" as const, label: "3rd Month" },
                   { id: "sixth" as const, label: "6th Month" },
                   { id: "oneYear" as const, label: "1 Year" },
@@ -2135,6 +2246,13 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                         <th className="px-3 py-2">Department</th>
                         <th className="px-3 py-2">Immediate Supervisor</th>
                         <th className="px-3 py-2">Email</th>
+                        {isRelieverView && (
+                          <>
+                            <th className="px-3 py-2">Employee Being Replaced</th>
+                            <th className="px-3 py-2">Reason for Replacement</th>
+                            <th className="px-3 py-2">Position Being Replaced</th>
+                          </>
+                        )}
                         <th className="px-3 py-2">{dateColumnLabel}</th>
                         {isMilestoneView && <th className="px-3 py-2">Notes</th>}
                         {milestoneType === "sixth" && isMilestoneView && (
@@ -2154,6 +2272,13 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                           <td className="px-3 py-2 text-ink-muted">{r.department || "—"}</td>
                           <td className="px-3 py-2 text-ink-muted">{r.supervisor || "—"}</td>
                           <td className="px-3 py-2 text-ink-muted">{r.email || "—"}</td>
+                          {isRelieverView && (
+                            <>
+                              <td className="px-3 py-2 text-ink-muted">{r.replacedName || "—"}</td>
+                              <td className="px-3 py-2 text-ink-muted">{r.replacedReason || "—"}</td>
+                              <td className="px-3 py-2 text-ink-muted">{r.replacedPosition || "—"}</td>
+                            </>
+                          )}
                           <td className="px-3 py-2 text-ink-muted">{formatDate(r.date, "MMMM d, yyyy")}</td>
                           {isMilestoneView && (
                             <td className="px-3 py-2">
@@ -2239,7 +2364,11 @@ function CountListPanel({
     : rows;
 
   const dateHeading =
-    kind === "resigned" ? "Separation Date" : kind === "newHires" ? "Onboarding Date" : "Date Added";
+    kind === "resigned"
+      ? "Separation Date"
+      : kind === "newHires"
+        ? "Onboarding Date"
+        : "Hired/Onboarding Date";
 
   return (
     <div className="mt-4">
@@ -2278,6 +2407,7 @@ function CountListPanel({
                 <th className="px-3 py-2">Department</th>
                 <th className="px-3 py-2">Email</th>
                 <th className="px-3 py-2">{dateHeading}</th>
+                {kind === "resigned" && <th className="px-3 py-2">Reason</th>}
                 {kind === "newHires" && <th className="px-3 py-2">Starts In</th>}
               </tr>
             </thead>
@@ -2318,6 +2448,9 @@ function CountListPanel({
                         "—"
                       )}
                     </td>
+                    {kind === "resigned" && (
+                      <td className="px-3 py-2 text-ink-muted">{r.reason || "—"}</td>
+                    )}
                     {kind === "newHires" && (
                       <td className="px-3 py-2">
                         {(() => {
@@ -2525,7 +2658,7 @@ function CentralizedCOETracker({ employees }: { employees: Employee[] }) {
           s.columns = [{ width: 26 }, { width: 24 }, { width: 20 }, { width: 20 }, { width: 18 }];
           const t = s.addRow(["Confirmation of Regularization Report"]);
           t.getCell(1).font = { bold: true, size: 12 };
-          const h = s.addRow(["Employee Name", "Position", "Department", "Date of Regularization", "Date Created"]);
+          const h = s.addRow(["Employee Name", "Position", "Department", "Date Created", "Date of Regularization"]);
           h.eachCell((c) => {
             c.font = { bold: true, color: { argb: "FFFFFFFF" } };
             c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0E5E56" } };
@@ -2535,8 +2668,8 @@ function CentralizedCOETracker({ employees }: { employees: Employee[] }) {
               r.employeeName,
               r.position,
               r.department,
-              formatDate(r.dateOfRegularization, "MMMM d, yyyy"),
               formatDate(r.dateCreated, "MMMM d, yyyy"),
+              formatDate(r.dateOfRegularization, "MMMM d, yyyy"),
             ])
           );
         }

@@ -75,16 +75,58 @@ export function resignedCoeIndex(coeRequests: COERequest[]): Map<string, string>
   return index;
 }
 
+/** The reason shown against a reliever whose engagement has run its course. */
+export const RELIEVER_CONTRACT_ENDED_REASON = "End of Contract (Reliever)";
+
+/**
+ * The day a reliever's contract ran out, if that day has passed.
+ *
+ * A reliever engagement ends on a date agreed up front, and nobody files a resignation
+ * for it — so without this the contract would lapse and the employee would stay in the
+ * headcount indefinitely. The date has to be in the past: an engagement ending next month
+ * is a current employee with a known end date, which is what the Reliever Contract
+ * milestone list is for.
+ */
+export function relieverContractEnded(e: Employee, now: Date = new Date()): string | null {
+  if (!e.isReliever || !e.relieverEndDate) return null;
+  const end = new Date(e.relieverEndDate);
+  if (Number.isNaN(end.getTime())) return null;
+  return end.getTime() <= now.getTime() ? e.relieverEndDate : null;
+}
+
 /**
  * Separation date, or null when the employee has not resigned. An empty string means
  * resigned with no date on record — never their date added, which is not a last day.
  */
-export function separationDate(e: Employee, coeIndex: Map<string, string>): string | null {
+export function separationDate(
+  e: Employee,
+  coeIndex: Map<string, string>,
+  now: Date = new Date()
+): string | null {
   if (e.lastDay) return e.lastDay;
   const fromCoe = coeIndex.get(nameKey(e.name));
   if (fromCoe) return fromCoe;
   if (e.resignedStatus === "resigned") return "";
-  return null;
+  // Checked after the explicit records above, so a last day entered by hand still wins.
+  return relieverContractEnded(e, now);
+}
+
+/**
+ * Why someone left, for the Resigned list.
+ *
+ * A reliever is the one case the system can answer by itself: no one records a reason
+ * because the contract simply reached the date it was written to reach.
+ */
+export function separationReason(
+  e: Employee,
+  coeIndex: Map<string, string>,
+  now: Date = new Date()
+): string {
+  if (e.reasonForLeaving?.trim()) return e.reasonForLeaving.trim();
+  if (!e.lastDay && !coeIndex.get(nameKey(e.name)) && relieverContractEnded(e, now)) {
+    return RELIEVER_CONTRACT_ENDED_REASON;
+  }
+  return "";
 }
 
 /**
@@ -103,7 +145,7 @@ export function classifyEmployee(
   coeIndex: Map<string, string>,
   now: Date = new Date()
 ): EmployeeStatus {
-  if (separationDate(e, coeIndex) !== null) return "resigned";
+  if (separationDate(e, coeIndex, now) !== null) return "resigned";
   if (isAwaitingOnboarding(e, now)) return "newHire";
   return "active";
 }

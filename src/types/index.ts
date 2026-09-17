@@ -353,8 +353,11 @@ export type OnboardingChecklistCategory = {
 };
 
 export const DEFAULT_NOTES_TASK_LIST_ITEMS: string[] = [
+  "Print Employee Name and Attach to White Long Folder",
+  "Attach the 1x1 & 2x2 Picture in the Folder",
   "Print Employee 201 Checklist",
   "Print List of Requirements",
+  "Attach Waiver Form",
   "Print Employment Contract",
   "Print Job Offer",
   "Print BDO Reference Sheet",
@@ -377,6 +380,49 @@ export const DEFAULT_NOTES_TASK_LIST_ITEMS: string[] = [
   "Remind employee to file Certificate of Attendance in Sprout (for \"Time In\" only)",
 ];
 
+/**
+ * Items added to the default task list after employees already existed, and the item each
+ * one belongs after (null meaning first).
+ *
+ * A new employee gets the whole list above, but the hundreds already on file each carry
+ * their own copy of it, with their own ticks and their own additions. This is what lets
+ * those be brought up to date without disturbing any of that: it says where each new item
+ * goes rather than replacing the list wholesale.
+ */
+export const NOTES_TASK_LIST_ADDITIONS: { label: string; after: string | null }[] = [
+  { label: "Print Employee Name and Attach to White Long Folder", after: null },
+  {
+    label: "Attach the 1x1 & 2x2 Picture in the Folder",
+    after: "Print Employee Name and Attach to White Long Folder",
+  },
+  { label: "Attach Waiver Form", after: "Print List of Requirements" },
+];
+
+/**
+ * Adds any missing standard item to an employee's task list, in its proper place.
+ *
+ * Everything already on the list stays exactly as it is, ticks included, and an item the
+ * list already has is left alone — so this is safe to run over the same record twice.
+ * Where the item it should follow is not on that list, it goes on the end rather than
+ * somewhere arbitrary.
+ */
+export function withNotesTaskListAdditions(
+  categories: OnboardingChecklistCategory[]
+): OnboardingChecklistCategory[] {
+  const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+  return categories.map((category) => {
+    if (!/notes/i.test(category.title || "")) return category;
+    const items = [...category.items];
+    for (const { label, after } of NOTES_TASK_LIST_ADDITIONS) {
+      if (items.some((it) => same(it.label, label))) continue;
+      const anchor = after === null ? -1 : items.findIndex((it) => same(it.label, after));
+      const at = after === null ? 0 : anchor === -1 ? items.length : anchor + 1;
+      items.splice(at, 0, { id: uuidV4(), label, checked: false });
+    }
+    return { ...category, items };
+  });
+}
+
 export function defaultOnboardingChecklist(): OnboardingChecklistCategory[] {
   return [
     {
@@ -389,6 +435,83 @@ export function defaultOnboardingChecklist(): OnboardingChecklistCategory[] {
       })),
     },
   ];
+}
+
+/**
+ * The non-basic part of the monthly gross: rice subsidy 2,500, uniform and clothing
+ * 666.67, medical cash allowance 333.33, laundry 400.
+ *
+ * These are de minimis benefits and are fixed amounts, not a share of pay, so a raise
+ * lands entirely on the basic salary. That is why the new basic is the new gross less this
+ * figure rather than the old basic plus a percentage.
+ */
+export const FIXED_MONTHLY_ALLOWANCES = 3900;
+
+/** One raise, kept so the record shows where a salary came from. */
+export type SalaryChange = {
+  id: string;
+  /** ISO date the raise was applied. */
+  appliedAt: string;
+  /** What prompted it — "6th Month Appraisal / Regularization". */
+  reason: string;
+  /** The percentage used, as typed, when the figures came from one. */
+  increasePercent?: string;
+  previousBasicSalary?: string;
+  previousTotalMonthlyGrossCompensation?: string;
+  newBasicSalary?: string;
+  newTotalMonthlyGrossCompensation?: string;
+};
+
+/** Reads a typed amount: "₱30,000.00", "30000" and "30,000" all give 30000. */
+export function parseAmount(raw?: string): number | null {
+  const text = (raw || "").trim();
+  if (!text || !/\d/.test(text)) return null;
+  const value = Number(text.replace(/[^\d.-]/g, ""));
+  return Number.isFinite(value) ? value : null;
+}
+
+/** "31,200.00" — how every amount is written on a contract or a letter. */
+export function formatAmount(value: number): string {
+  return value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/**
+ * What a regularization raise comes to.
+ *
+ * The percentage applies to the whole monthly gross, and the allowances inside that gross
+ * are fixed sums — so the increase is taken on the gross and the new basic salary is
+ * whatever is left of it once the allowances are set aside.
+ *
+ *   gross 30,000 at 17%  ->  +5,100  ->  gross 35,100, basic 31,200
+ *
+ * Returns null when there is nothing to work from, so a caller can tell the difference
+ * between "no raise on file" and "a raise of nothing".
+ */
+export function regularizationIncrease(e: {
+  basicSalary?: string;
+  totalMonthlyGrossCompensation?: string;
+  regularizationIncreasePercent?: string;
+}): {
+  percent: number;
+  currentGross: number;
+  increaseAmount: number;
+  newGross: number;
+  newBasic: number;
+} | null {
+  const percent = parseAmount(e.regularizationIncreasePercent);
+  const currentGross = parseAmount(e.totalMonthlyGrossCompensation);
+  if (percent === null || currentGross === null) return null;
+
+  const increaseAmount = currentGross * (percent / 100);
+  const newGross = currentGross + increaseAmount;
+  return {
+    percent,
+    currentGross,
+    increaseAmount,
+    newGross,
+    // A gross below the allowances would make this negative, which is not a salary.
+    newBasic: Math.max(0, newGross - FIXED_MONTHLY_ALLOWANCES),
+  };
 }
 
 /** The office address offered as the ready-made choice on a reliever contract. */
@@ -427,6 +550,10 @@ export type Employee = {
   basicSalary?: string;
   totalMonthlyGrossCompensation?: string;
   basicGrossSalary?: string;
+  /** Regularization increase promised by the contract, as a percentage, e.g. "17". */
+  regularizationIncreasePercent?: string;
+  /** Every raise applied to this record, newest last. */
+  salaryHistory?: SalaryChange[];
   // Identification & profile
   philhealthNo?: string;
   /** Captured on import so forms needing "SURNAME, FIRST MIDDLE" can rebuild it. */

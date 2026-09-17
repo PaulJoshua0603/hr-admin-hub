@@ -8,6 +8,8 @@ import {
   emptyMedicalExamChecklist,
   type PreEmploymentChecklistKey,
   type MedicalExamChecklistKey,
+  formatAmount,
+  regularizationIncrease,
 } from "@/types";
 import { formatDate } from "./dates";
 import { supabase, supabaseReady } from "./supabaseClient";
@@ -459,14 +461,23 @@ export async function exportRegularizationWithIncreaseDocx(employee: Employee) {
     ? formatDate(addMonthsISOLocal(employee.dateHired, 6), "MMMM d, yyyy")
     : "";
 
+  // The letter announces the raise, so it carries the figures the raise produces — not the
+  // ones still on the record. With no increase percentage on file there is nothing to work
+  // from and the current figures stand, which is what the no-increase letter says anyway.
+  const raise = regularizationIncrease(employee);
+  const newBasic = raise ? formatAmount(raise.newBasic) : employee.basicSalary || "0.00";
+  const newGross = raise
+    ? formatAmount(raise.newGross)
+    : employee.totalMonthlyGrossCompensation || "0.00";
+
   xml = replaceHighlightedBlocksSequential(xml, [
     buildRunSmall(dateIssued),
     buildRunSmall(employee.name),
     buildRunSmall(toTitleCasePosition(employee.position || "")),
     buildRunSmall(firstNameOf(employee.name)),
     buildRunSmall(regDate),
-    buildRunSmall(employee.basicSalary || "0.00"),
-    buildRunSmall(employee.totalMonthlyGrossCompensation || "0.00"),
+    buildRunSmall(newBasic),
+    buildRunSmall(newGross),
     buildRunSmall(employee.name),
   ]);
 

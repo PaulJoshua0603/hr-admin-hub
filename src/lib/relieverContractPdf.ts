@@ -18,7 +18,7 @@
  * A paragraph only grows into space that is already blank: the wrap keeps to the gap below
  * it, and the type is stepped down slightly rather than allowed to run into what follows.
  */
-import type { PDFFont } from "pdf-lib";
+import type { PDFFont, PDFPage, RGB } from "pdf-lib";
 import type { Employee } from "@/types";
 import { DEFAULT_WORK_LOCATION } from "@/types";
 import { formatDate } from "./dates";
@@ -72,7 +72,9 @@ function formatAmount(raw?: string): string {
  * A `find` with more than one value fills its occurrences in document order: the two
  * "00,000.00" cells are the basic salary and the total gross respectively.
  */
-export function relieverContractValues(employee: Employee): { find: string; values: string[] }[] {
+export function relieverContractValues(
+  employee: Employee
+): { find: string; values: string[]; lift?: boolean; list?: boolean }[] {
   const longDate = (iso?: string) => (iso ? formatDate(iso, "MMMM d, yyyy") : "");
   const hireDate = longDate(employee.dateHired);
   const endDate = longDate(employee.relieverEndDate);
@@ -105,7 +107,14 @@ export function relieverContractValues(employee: Employee): { find: string; valu
     { find: "Employee Position", values: repeat(employee.position || "") },
     { find: "Hired Date", values: repeat(hireDate) },
     { find: "End Date", values: repeat(endDate) },
-    { find: "Job Duties", values: [employee.replacedJobDuties || ""] },
+    // The blank form leaves five empty lines between "including:" and this placeholder, so
+    // the duties printed where it stood and the gap above them read as a mistake. `lift`
+    // closes that up: the list starts one line under the sentence that introduces it, and
+    // the space the template left is where it grows.
+    // `list` keeps one duty per line, exactly as the user typed them — their own markers
+    // and nothing added — each wrapped under a hanging indent rather than run together
+    // into a single paragraph.
+    { find: "Job Duties", values: [employee.replacedJobDuties || ""], lift: true, list: true },
     {
       find: "00,000.00",
       values: [
@@ -138,6 +147,11 @@ type Block = {
   /** Set to its right edge, as the amount column is, and where that edge is. */
   alignRight: boolean;
   anchorRight: number;
+  /** The baseline of the line this block sits on, which its own may be a point off. */
+  baseline: number;
+  /** The line above and the line below, which bound the space it can use. */
+  prevY: number | null;
+  floorY: number;
   /** Whether this block was the only column on its line. */
   full: boolean;
   text: string;
@@ -151,8 +165,36 @@ const COLUMN_GAP = 8;
 const DEFAULT_LEADING = 1.32;
 /** Small enough to take any realistic value, large enough to stay readable. */
 const MIN_SIZE = 5;
+/**
+ * How far below its introducing sentence a lifted field starts, in lines.
+ *
+ * Two, so there is a clear line of space between "including:" and the first duty. Butted
+ * straight underneath, the list read as a continuation of the sentence rather than as the
+ * list the sentence promises.
+ */
+const LIFT_GAP_LINES = 2;
+/**
+ * The contract is wanted at 11 point, and the template is set at 12. Scaling rather than
+ * flattening to 11 keeps the section headings a size above the body copy, and keeps the
+ * bullet lists a size below it, exactly as the template intends.
+ */
+const BODY_SCALE = 11 / 12;
 
 const collapse = (s: string) => s.replace(/\s+/g, " ").trim();
+
+/**
+ * Tidies the spacing without losing the line breaks.
+ *
+ * `collapse` flattens a value onto one line, which is right for a field that occupies one
+ * — but the duties are a list, and flattening them is what ran nine entries together into
+ * a single paragraph. Runs of spaces still go, and so do blank lines.
+ */
+const tidyLines = (s: string) =>
+  s
+    .split("\n")
+    .map((line) => line.replace(/[^\S\n]+/g, " ").trim())
+    .filter(Boolean)
+    .join("\n");
 
 /**
  * Makes a value safe to set in the template's fonts.
@@ -164,14 +206,16 @@ const collapse = (s: string) => s.replace(/\s+/g, " ").trim();
  */
 function toPdfText(raw: string): string {
   return (raw || "")
-    .replace(/\r\n?/g, " ")
+    // Line breaks are kept: in the duties field each one is the user starting a new entry,
+    // and it is the only record of how they laid the list out.
+    .replace(/\r\n?/g, "\n")
     .replace(/₱/g, "P")
     .replace(/[‘’‛]/g, "'")
     .replace(/[“”]/g, '"')
     .replace(/[–—]/g, "-")
     .replace(/…/g, "...")
     .replace(/[\t\v\f]/g, " ")
-    .replace(/[^\x20-\x7e]/g, "");
+    .replace(/[^\n\x20-\x7e•]/g, "");
 }
 
 function dataUrlToBytes(dataUrl: string): Uint8Array {
@@ -244,7 +288,13 @@ async function readPages(bytes: Uint8Array): Promise<Segment[][][]> {
         return columns.map((cells) => ({
           runs: cells,
           x: cells[0].x,
-          right: Math.max(...cells.map((c) => c.x + c.width)),
+          // Where the ink ends, not where the run of padding spaces after it does: a text
+          // extractor reports that padding as one wide item reaching the next column, and
+          // counting it would make this column look as though it covered that one too.
+          right: Math.max(
+            ...cells.filter((c) => c.str.trim()).map((c) => c.x + c.width),
+            cells[0].x
+          ),
           y: cells[0].y,
           // The line's body size, not a superscript's.
           size: Math.max(...cells.map((c) => c.size)),
@@ -321,6 +371,11 @@ function blocksFor(page: Segment[][], pageWidth: number): Block[] {
         // template sets its placeholder in a different face from the figures below it, so
         // its own right edge is a couple of points out from the column the reader sees.
         anchorRight: columnRight(page, lineIndex, columnIndex) ?? segment.right,
+        // A table cell is often set a point clear of its row's baseline; taking the row's
+        // own settles the figures onto the same line as the descriptions beside them.
+        baseline: line[0].y,
+        prevY: page[lineIndex - 1]?.[0]?.y ?? null,
+        floorY: RIGHT_MARGIN,
         full,
         text: "",
       });
@@ -340,11 +395,106 @@ function blocksFor(page: Segment[][], pageWidth: number): Block[] {
     // How far it may spill: the blank space between its last line and whatever is below it.
     const bottom = block.lines[block.lines.length - 1];
     const below = page.find((line) => line[0].y < bottom.y - 1);
-    const floor = below?.[0]?.y ?? RIGHT_MARGIN;
-    const spare = Math.max(0, Math.floor((bottom.y - floor - block.leading) / block.leading));
+    block.floorY = below?.[0]?.y ?? RIGHT_MARGIN;
+    const spare = Math.max(
+      0,
+      Math.floor((bottom.y - block.floorY - block.leading) / block.leading)
+    );
     block.maxLines = block.lines.length + spare;
   }
   return blocks;
+}
+
+/**
+ * Where a line of a drawn block sits, and how it is set.
+ *
+ * A bullet is kept apart from the text it introduces rather than glued to its front,
+ * because justifying the line would otherwise stretch the space after the bullet and the
+ * markers would no longer line up down the page.
+ */
+type Placed = { text: string; x: number; width: number; justify: boolean; marker?: string };
+
+/**
+ * The duties as the user laid them out, one entry per line.
+ *
+ * Whatever they typed is what gets printed: if they wrote a bullet at the start of each
+ * line, those bullets are theirs and appear once. Nothing is added and nothing is
+ * reordered — the only tidying is dropping blank lines and a stray marker left on the end
+ * of one, which would otherwise print as an empty entry.
+ */
+function listItems(text: string): string[] {
+  return text
+    .split(/\n+/)
+    .map((line) => line.replace(/\s*[•*]\s*$/, "").trim())
+    .filter((line) => line && !/^[•*-]$/.test(line));
+}
+
+/**
+ * Sets each entry as its own paragraph, with its wrapped lines hanging under its text.
+ *
+ * An entry that opens with a marker gets an indent the width of that marker, so the second
+ * line of a long duty starts under the first word rather than under the bullet — which is
+ * what stops a wrapped line from reading as a duty of its own.
+ */
+function listLines(
+  text: string,
+  font: PDFFont,
+  size: number,
+  width: number,
+  x: number
+): Placed[] {
+  const out: Placed[] = [];
+  for (const item of listItems(text)) {
+    // The marker the user typed, kept as part of the first line and measured so the rest
+    // of the entry can hang under it.
+    const marker = /^([•*-]\s+)/.exec(item)?.[1] ?? "";
+    const body = item.slice(marker.length);
+    const indent = marker ? font.widthOfTextAtSize(marker, size) : 0;
+    const wrapped = wrap(body, font, size, width - indent);
+    wrapped.forEach((line, i) => {
+      out.push({
+        text: line,
+        x: x + indent,
+        width: width - indent,
+        // The last line of an entry is what ends it, so it keeps its natural width.
+        justify: i < wrapped.length - 1,
+        marker: i === 0 && marker ? marker.trim() : undefined,
+      });
+    });
+  }
+  return out;
+}
+/**
+ * Spreads a line to the full measure by widening its word spaces.
+ *
+ * pdf-lib has no justification of its own, so each word is placed itself with the slack
+ * shared out between them. Only a line that continues onto another is justified:
+ * stretching the line that ends an item would pull three words across the whole page.
+ */
+function drawJustified(
+  page: PDFPage,
+  line: string,
+  x: number,
+  y: number,
+  size: number,
+  font: PDFFont,
+  width: number,
+  color: RGB
+) {
+  const words = line.split(" ").filter(Boolean);
+  const inked = words.reduce((total, word) => total + font.widthOfTextAtSize(word, size), 0);
+  const gaps = words.length - 1;
+  const slack = gaps > 0 ? (width - inked) / gaps : 0;
+  // A line that needs more than treble spacing is one long word from looking broken.
+  if (gaps < 1 || slack <= 0 || slack > font.widthOfTextAtSize(" ", size) * 3) {
+    page.drawText(line, { x, y, size, font, color });
+    return;
+  }
+  let cursor = x;
+  for (const word of words) {
+    page.drawText(word, { x: cursor, y, size, font, color });
+    cursor += font.widthOfTextAtSize(word, size) + slack;
+  }
 }
 
 /** Breaks text into lines that fit `width` at `size`. */
@@ -375,7 +525,8 @@ export async function buildRelieverContractPdf(
   const spec = relieverContractValues(employee);
 
   const { PDFDocument, StandardFonts, rgb } = await import("pdf-lib");
-  const { eraseLines, removeUnderlines, removeYellowHighlights } = await import("./pdfContentEdit");
+  const { eraseLines, removeUnderlines, removeYellowHighlights, scaleTextRuns } =
+    await import("./pdfContentEdit");
 
   const pdf = await PDFDocument.load(source);
   const pdfPages = pdf.getPages();
@@ -443,6 +594,8 @@ export async function buildRelieverContractPdf(
 
   const used = new Map<string, number>();
   const filled = new Set<string>();
+  const liftable = new Set(spec.filter((s) => s.lift).map((s) => s.find));
+  const listed = new Set(spec.filter((s) => s.list).map((s) => s.find));
 
   for (let pageIndex = 0; pageIndex < pageSegments.length; pageIndex++) {
     const page = pdfPages[pageIndex];
@@ -485,7 +638,7 @@ export async function buildRelieverContractPdf(
         finds.forEach((find) => filled.add(find));
         continue;
       }
-      rewrites.push({ block, text: collapse(text), finds });
+      rewrites.push({ block, text: tidyLines(text), finds });
     }
     if (!rewrites.length) continue;
 
@@ -516,60 +669,148 @@ export async function buildRelieverContractPdf(
         )
     );
 
+    // Work out how every rewrite will be set before anything is drawn, because how much
+    // room the duties actually use decides how far the rest of the page moves up.
+    type Laid = {
+      block: Block;
+      finds: string[];
+      font: PDFFont;
+      size: number;
+      lines: Placed[];
+      /** Baseline of its first line, before any lift. */
+      top: number;
+      cover: boolean;
+      /** The field whose unused space the rest of the page can reclaim. */
+      lifted: boolean;
+    };
+    const laid: Laid[] = [];
+
     for (let i = 0; i < rewrites.length; i++) {
       const { block, text, finds } = rewrites[i];
-      if (!survived[i]) {
-        // The amount cells are set in a CID font, where the file holds glyph numbers and
-        // not characters, so there is no text to take out — and every other way of reading
-        // them back agrees they are there. A single line has a known extent, so it can be
-        // covered instead; a paragraph is left alone and reported, because a white band
-        // across one would take the rules and underlines with it.
-        if (block.lines.length !== 1 || !text) continue;
+      // The amount cells are set in a CID font, where the file holds glyph numbers and not
+      // characters, so there is no text to take out — and every other way of reading them
+      // back agrees they are there. A single line has a known extent, so it can be covered
+      // instead; a paragraph is left alone and reported, because a white band across one
+      // would take the rules and underlines with it.
+      const cover = !survived[i];
+      if (cover && (block.lines.length !== 1 || !text)) continue;
+      // Only now is the placeholder really gone from the page and its value on it.
+      finds.forEach((find) => filled.add(find));
+      if (!text) continue;
+
+      const font = fontFor(block.font);
+      const width = block.limit - block.x;
+      // A lifted field starts under the sentence that introduces it instead of where the
+      // template's placeholder happened to sit, with a clear line between the two.
+      const lifted = finds.some((find) => liftable.has(find)) && block.prevY !== null;
+      const top = lifted ? block.prevY! - block.leading * LIFT_GAP_LINES : block.lines[0].y;
+      const maxLines = lifted
+        ? Math.max(1, Math.floor((top - block.floorY) / block.leading))
+        : block.maxLines;
+      const asList = finds.some((find) => listed.has(find));
+
+      // A list is measured the same way as a paragraph, bullets and hanging indent
+      // included, so it cannot overrun the space the template left for it either.
+      const set = (at: number): Placed[] =>
+        asList
+          ? listLines(text, font, at, width, block.x)
+          : wrap(text, font, at, width).map((line) => ({
+              text: line,
+              x: block.x,
+              width,
+              justify: false,
+            }));
+
+      // Set at the template's size if it fits the space the field owns, and otherwise
+      // stepped down a quarter point at a time — far less conspicuous than a value set at
+      // half the size of the sentence it sits in. It keeps stepping down until the whole of
+      // it fits: an address too long for its line comes out small, never cut short, because
+      // a contract missing half of where the employee lives is worse than one set tight.
+      let size = block.size * BODY_SCALE;
+      let lines = set(size);
+      while (lines.length > maxLines && size > MIN_SIZE) {
+        size -= 0.25;
+        lines = set(size);
+      }
+      laid.push({ block, finds, font, size, lines, top, cover, lifted });
+    }
+
+    // How much of the reserved space went unused, and therefore how far everything under it
+    // can come up. The template leaves room for a dozen duties; three duties should not
+    // leave nine blank lines in the middle of the page.
+    let lift: { below: number; by: number } | null = null;
+    for (const item of laid) {
+      if (!item.lifted || item.cover) continue;
+      const bottom = item.top - (item.lines.length - 1) * item.block.leading;
+      const wanted = bottom - item.block.leading * LIFT_GAP_LINES;
+      const by = wanted - item.block.floorY;
+      if (by > 1) lift = { below: item.block.floorY, by };
+    }
+    /** Where a baseline ends up once the page has closed up. */
+    const lifted = (y: number) => (lift && y <= lift.below ? y + lift.by : y);
+
+    // Now the page itself: the size operands already on it are scaled, each run is pulled
+    // back towards the start of its own column by the same proportion — so a line Word
+    // split into several runs, around a hyphen or a superscript, does not come apart as the
+    // type shrinks — and anything below the reserved space moves up to close the gap.
+    await scaleTextRuns(
+      pdf,
+      pageIndex,
+      BODY_SCALE,
+      pageSegments[pageIndex].flatMap((line) =>
+        line.map((segment) => ({ x: segment.x, right: segment.right, y: segment.y }))
+      ),
+      lift ?? undefined
+    );
+
+    for (const item of laid) {
+      const { block, font, size, lines, cover } = item;
+      const top = lifted(item.top);
+      if (cover) {
         const line = block.lines[0];
         page.drawRectangle({
           x: line.x - 1,
-          y: line.y - block.size * 0.24,
+          y: lifted(line.y) - block.size * 0.24,
           width: line.right - line.x + 1.5,
           height: block.size * 1.06,
           color: rgb(1, 1, 1),
         });
       }
-      // Only now is the placeholder really gone from the page and its value on it.
-      finds.forEach((find) => filled.add(find));
-      if (!text) continue;
-      const font = fontFor(block.font);
-      const width = block.limit - block.x;
 
-      // Set at the template's size if it fits the space the paragraph owns, and otherwise
-      // stepped down a quarter point at a time — far less conspicuous than a value set at
-      // half the size of the sentence it sits in. It keeps stepping down until the whole
-      // of it fits: an address too long for its line comes out small, never cut short,
-      // because a contract missing half of where the employee lives is worse than one set
-      // a little tight.
-      let size = block.size;
-      let lines = wrap(text, font, size, width);
-      while (lines.length > block.maxLines && size > MIN_SIZE) {
-        size -= 0.25;
-        lines = wrap(text, font, size, width);
-      }
+      // A list gets a little air between items, if there is room for it — the gap is what
+      // separates one duty from the next once an item wraps onto a second line.
+      const leading =
+        item.lines.some((l) => l.marker) && lines.length < block.maxLines
+          ? block.leading * 1.08
+          : block.leading;
 
       lines.forEach((line, index) => {
-        if (!line) return;
+        if (!line.text) return;
+        const y = (block.alignRight ? lifted(block.baseline) : top) - index * leading;
+        if (line.marker) {
+          page.drawText(line.marker, { x: block.x, y, size, font, color: rgb(0, 0, 0) });
+        }
         // A column set to the right of its cell — the amounts — keeps its right edge, so
         // the figures still line up under one another whatever their length.
-        const x = block.alignRight
-          ? block.anchorRight - font.widthOfTextAtSize(line, size)
-          : block.x;
-        page.drawText(line, {
-          x,
-          y: block.lines[0].y - index * block.leading,
-          size,
-          font,
-          color: rgb(0, 0, 0),
-        });
+        if (block.alignRight) {
+          page.drawText(line.text, {
+            x: block.anchorRight - font.widthOfTextAtSize(line.text, size),
+            y,
+            size,
+            font,
+            color: rgb(0, 0, 0),
+          });
+          return;
+        }
+        if (line.justify) {
+          drawJustified(page, line.text, line.x, y, size, font, line.width, rgb(0, 0, 0));
+          return;
+        }
+        page.drawText(line.text, { x: line.x, y, size, font, color: rgb(0, 0, 0) });
       });
     }
   }
+
 
   return {
     bytes: await pdf.save(),

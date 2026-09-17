@@ -5,7 +5,7 @@ import { v4 as uuid } from "uuid";
 import { useSupabaseStore } from "@/lib/useSupabaseStore";
 import { Button, Card, CollapsibleSection, Input, SectionHeading } from "@/components/ui";
 import { EmployeeNameInput } from "@/components/EmployeeNameInput";
-import { formatDate, formatTime24, todayISO } from "@/lib/dates";
+import { addMonthsISO, formatDate, formatTime24, todayISO } from "@/lib/dates";
 import { useNotifications } from "@/lib/notificationContext";
 import type {
   ER2ReportRow,
@@ -16,6 +16,7 @@ import type {
   COERequest,
   COECategory,
 } from "@/types";
+import { EMPLOYMENT_MILESTONE_MONTHS } from "@/types";
 import { ReportExportSection } from "./ExportSection";
 import { SixthMonthReport } from "./SixthMonthReport";
 import { ER2FormSection } from "./ER2FormSection";
@@ -150,7 +151,12 @@ function ER2Table() {
           value={form.employeeName}
           onChange={(employeeName) => setForm((f) => ({ ...f, employeeName }))}
           onSelect={(e) =>
-            setForm((f) => ({ ...f, employeeName: e.name, position: e.position, department: e.department }))
+            setForm((f) => ({
+              ...f,
+              employeeName: e.name,
+              position: e.position,
+              department: e.department,
+            }))
           }
         />
         <Input placeholder="Position" value={form.position} onChange={(e) => setForm((f) => ({ ...f, position: e.target.value }))} />
@@ -236,6 +242,19 @@ function ER2Table() {
 
 /* ------------------------- Confirmation of Regularization ------------------------- */
 
+/**
+ * The 6th-month milestone date for a hire date, ready for a date input.
+ *
+ * The letter confirms regularization on the day the Employment Milestones panel says it
+ * falls, so the report derives it the same way that panel does rather than asking the user
+ * to copy it across and risk the two disagreeing. It stays editable: the date can be moved
+ * if regularization actually happened on another day.
+ */
+function sixthMonthDateInput(dateHired?: string): string {
+  if (!dateHired) return "";
+  return addMonthsISO(dateHired, EMPLOYMENT_MILESTONE_MONTHS.sixthMonth).slice(0, 10);
+}
+
 type RegDraft = {
   employeeName: string;
   position: string;
@@ -312,18 +331,24 @@ function RegularizationTable() {
           value={form.employeeName}
           onChange={(employeeName) => setForm((f) => ({ ...f, employeeName }))}
           onSelect={(e) =>
-            setForm((f) => ({ ...f, employeeName: e.name, position: e.position, department: e.department }))
+            setForm((f) => ({
+              ...f,
+              employeeName: e.name,
+              position: e.position,
+              department: e.department,
+              dateOfRegularization: sixthMonthDateInput(e.dateHired) || f.dateOfRegularization,
+            }))
           }
         />
         <Input placeholder="Position" value={form.position} onChange={(e) => setForm((f) => ({ ...f, position: e.target.value }))} />
         <Input placeholder="Department" value={form.department} onChange={(e) => setForm((f) => ({ ...f, department: e.target.value }))} />
         <label className="flex flex-col gap-1 text-[11px] text-ink-muted">
-          Date of Regularization
-          <Input type="date" value={form.dateOfRegularization} onChange={(e) => setForm((f) => ({ ...f, dateOfRegularization: e.target.value }))} />
-        </label>
-        <label className="flex flex-col gap-1 text-[11px] text-ink-muted">
           Date Created
           <Input type="date" value={form.dateCreated} onChange={(e) => setForm((f) => ({ ...f, dateCreated: e.target.value }))} />
+        </label>
+        <label className="flex flex-col gap-1 text-[11px] text-ink-muted">
+          Date of Regularization
+          <Input type="date" value={form.dateOfRegularization} onChange={(e) => setForm((f) => ({ ...f, dateOfRegularization: e.target.value }))} />
         </label>
         <Button onClick={addRow} className="self-end">+ Add</Button>
       </div>
@@ -336,8 +361,8 @@ function RegularizationTable() {
                 <th className="px-3 py-2">Employee Name</th>
                 <th className="px-3 py-2">Position</th>
                 <th className="px-3 py-2">Department</th>
-                <th className="px-3 py-2">Date of Regularization</th>
                 <th className="px-3 py-2">Date Created</th>
+                <th className="px-3 py-2">Date of Regularization</th>
                 <th className="px-3 py-2" />
               </tr>
             </thead>
@@ -355,6 +380,8 @@ function RegularizationTable() {
                             employeeName: e.name,
                             position: e.position,
                             department: e.department,
+                            dateOfRegularization:
+                              sixthMonthDateInput(e.dateHired) || d.dateOfRegularization,
                           }))
                         }
                         className="min-w-[180px]"
@@ -369,16 +396,16 @@ function RegularizationTable() {
                     <td className="px-3 py-2">
                       <Input
                         type="date"
-                        value={draft.dateOfRegularization}
-                        onChange={(e) => setDraft((d) => ({ ...d, dateOfRegularization: e.target.value }))}
+                        value={draft.dateCreated}
+                        onChange={(e) => setDraft((d) => ({ ...d, dateCreated: e.target.value }))}
                         className="min-w-[150px]"
                       />
                     </td>
                     <td className="px-3 py-2">
                       <Input
                         type="date"
-                        value={draft.dateCreated}
-                        onChange={(e) => setDraft((d) => ({ ...d, dateCreated: e.target.value }))}
+                        value={draft.dateOfRegularization}
+                        onChange={(e) => setDraft((d) => ({ ...d, dateOfRegularization: e.target.value }))}
                         className="min-w-[150px]"
                       />
                     </td>
@@ -391,8 +418,8 @@ function RegularizationTable() {
                     <td className="px-3 py-2 text-ink">{r.employeeName}</td>
                     <td className="px-3 py-2 text-ink-muted">{r.position || "—"}</td>
                     <td className="px-3 py-2 text-ink-muted">{r.department || "—"}</td>
-                    <td className="px-3 py-2 text-ink-muted">{formatDate(r.dateOfRegularization, "MMMM d, yyyy")}</td>
                     <td className="px-3 py-2 text-ink-muted">{formatDate(r.dateCreated, "MMMM d, yyyy")}</td>
+                    <td className="px-3 py-2 text-ink-muted">{formatDate(r.dateOfRegularization, "MMMM d, yyyy")}</td>
                     <td className="px-3 py-2">
                       <RowActions
                         onEdit={() => startEdit(r)}

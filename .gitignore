@@ -45,3 +45,4 @@ hr_employees-backup.json
 
 .vercel
 .env*
+dev.log

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { v4 as uuid } from "uuid";
 import { useSupabaseStore } from "@/lib/useSupabaseStore";
 import { buildRelieverContractPdf, relieverContractFileName } from "@/lib/relieverContractPdf";
+import { buildEmployeeNamePdf, employeeNameFileName } from "@/lib/employeeNamePdf";
 import { useNotifications } from "@/lib/notificationContext";
 import { addDaysISO, addMonthsISO, daysSince, formatDate, isOverdue, nextMondayISO, todayISO } from "@/lib/dates";
 import {
@@ -47,9 +48,16 @@ import {
   type Task,
   type COERequest,
   type COECategory,
+  FIXED_MONTHLY_ALLOWANCES,
+  formatAmount,
+  regularizationIncrease,
+  type SalaryChange,
 } from "@/types";
 
 const LAST_PAY_DAYS_AFTER_LAST_DAY = 35;
+
+/** The one reason string that identifies the 6th-month raise in an employee's history. */
+const REGULARIZATION_REASON = "6th Month Appraisal / Regularization";
 
 function requirementTone(
   s: RequirementStatus
@@ -446,6 +454,64 @@ export default function EmployeeDetailPage({
         return { ...c, items };
       }),
     });
+  }
+
+  /** The raise this record already carries, if one has been applied. */
+  function appliedRaise(e: Employee) {
+    return (e.salaryHistory || []).find((h) => h.reason === REGULARIZATION_REASON) || null;
+  }
+
+  /**
+   * Writes the calculated figures onto the record and keeps a note of what they replaced.
+   *
+   * The previous amounts live in the history entry rather than in a separate field, which
+   * is what lets the raise be taken back later and is also the record HR needs when
+   * someone asks what an employee used to earn.
+   */
+  function applyRegularizationRaise() {
+    const raise = regularizationIncrease(employee!);
+    if (!raise) {
+      notify("Set the Total Monthly Gross Compensation and the contract increase % first", "warn");
+      return;
+    }
+    if (appliedRaise(employee!)) return;
+
+    const entry: SalaryChange = {
+      id: uuid(),
+      appliedAt: todayISO(),
+      reason: REGULARIZATION_REASON,
+      increasePercent: employee!.regularizationIncreasePercent,
+      previousBasicSalary: employee!.basicSalary,
+      previousTotalMonthlyGrossCompensation: employee!.totalMonthlyGrossCompensation,
+      newBasicSalary: formatAmount(raise.newBasic),
+      newTotalMonthlyGrossCompensation: formatAmount(raise.newGross),
+    };
+    update(employee!.id, {
+      basicSalary: entry.newBasicSalary,
+      totalMonthlyGrossCompensation: entry.newTotalMonthlyGrossCompensation,
+      salaryHistory: [...(employee!.salaryHistory || []), entry],
+    });
+    notify(
+      `${employee!.name} — regularization increase applied (₱${entry.newTotalMonthlyGrossCompensation} gross)`,
+      "updated"
+    );
+  }
+
+  /**
+   * Puts back what the raise replaced.
+   *
+   * The entry is dropped from the history too: it is being undone, not recorded as having
+   * happened and then reversed, and leaving it would have the next apply refuse to run.
+   */
+  function revertRegularizationRaise() {
+    const entry = appliedRaise(employee!);
+    if (!entry) return;
+    update(employee!.id, {
+      basicSalary: entry.previousBasicSalary || "",
+      totalMonthlyGrossCompensation: entry.previousTotalMonthlyGrossCompensation || "",
+      salaryHistory: (employee!.salaryHistory || []).filter((h) => h.id !== entry.id),
+    });
+    notify(`${employee!.name} — regularization increase reverted`, "updated");
   }
 
   function handleSaveAll() {
@@ -871,7 +937,33 @@ export default function EmployeeDetailPage({
                     <span className="text-ink-muted">{formatDate(m.date)}</span>
                   </div>
                   {m.key === "sixthMonth" && (
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {/* The percentage sits with the button that spends it: the letter
+                          cannot be written without it, and this is where it is written. */}
+                      <label className="flex items-center gap-2 whitespace-nowrap text-xs text-ink-muted">
+                        Increase
+                        <span className="relative">
+                          <Input
+                            type="text"
+                            inputMode="decimal"
+                            className="w-20 pr-6 text-sm"
+                            placeholder="17"
+                            value={employee.regularizationIncreasePercent || ""}
+                            disabled={!isEditing}
+                            title={
+                              isEditing
+                                ? "The regularization increase promised by the contract"
+                                : "Use Edit above to set the contractual increase"
+                            }
+                            onChange={(e) =>
+                              update(employee.id, { regularizationIncreasePercent: e.target.value })
+                            }
+                          />
+                          <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-ink-muted">
+                            %
+                          </span>
+                        </span>
+                      </label>
                       <Button
                         variant="ghost"
                         onClick={() => exportRegularizationWithIncreaseDocx(employee)}
@@ -889,6 +981,15 @@ export default function EmployeeDetailPage({
                 </li>
               ))}
             </ul>
+          )}
+
+          {milestones.some((m) => m.key === "sixthMonth") && (
+            <RegularizationSalary
+              employee={employee}
+              isEditing={isEditing}
+              onApply={applyRegularizationRaise}
+              onRevert={revertRegularizationRaise}
+            />
           )}
           {milestones.length === 0 && !employee.lastDay && (
             <p className="mt-4 text-xs text-ink-muted">
@@ -1094,6 +1195,26 @@ export default function EmployeeDetailPage({
               onClick={() => exportRequirementsListDocx(employee)}
             >
               Employee 201 Checklist (Word)
+            </Button>
+            <Button
+              variant="ghost"
+              className="w-full min-w-0 justify-center whitespace-normal text-center leading-snug h-auto py-2"
+              title="The name label for the white long folder — SURNAME, FIRST M. in Arial Bold 28"
+              onClick={async () => {
+                const bytes = await buildEmployeeNamePdf(employee);
+                const blob = new Blob([new Uint8Array(bytes)], { type: "application/pdf" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = employeeNameFileName(employee.name);
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+                notify(`Employee Name label ready for ${employee.name}`, "created");
+              }}
+            >
+              Employee Name
             </Button>
             <Button
               variant="ghost"
@@ -1420,5 +1541,143 @@ function EmployeeCOERequestsList({
       </table>
     </div>
     </>
+  );
+}
+
+/**
+ * The salary the 6th-month regularization produces, and what it replaced.
+ *
+ * The figures are computed from the contract's increase percentage rather than typed, so
+ * the letter and the record cannot disagree — but applying them to the record stays a
+ * deliberate act, because a raise has a date and someone has to decide it has arrived.
+ * Ticking the box writes them and files what they replaced; clearing it puts the old ones
+ * back. Either way both amounts are still editable by hand up in Compensation, for the
+ * case the calculation is not what was actually agreed.
+ */
+function RegularizationSalary({
+  employee,
+  isEditing,
+  onApply,
+  onRevert,
+}: {
+  employee: Employee;
+  isEditing: boolean;
+  onApply: () => void;
+  onRevert: () => void;
+}) {
+  const history = employee.salaryHistory || [];
+  const applied = history.find((h) => h.reason === REGULARIZATION_REASON) || null;
+  // Once applied, the record already holds the new figures, so recomputing from them would
+  // compound the raise. The entry is the source of truth from then on.
+  const raise = applied ? null : regularizationIncrease(employee);
+  const peso = (value?: string) => `₱${value || "0.00"}`;
+
+  return (
+    <div className="mt-4 border-t border-border pt-4">
+      <h3 className="text-sm font-semibold text-ink">Regularization salary increase</h3>
+
+      {!raise && !applied && (
+        <p className="mt-2 text-xs text-ink-muted">
+          Set the <span className="text-ink">Increase %</span> on the 6th Month row above, with the{" "}
+          <span className="text-ink">Total Monthly Gross Compensation</span> filled in under
+          Compensation, and the new salary is worked out here.
+        </p>
+      )}
+
+      {(raise || applied) && (
+        <div className="mt-3 overflow-x-auto rounded-md bg-background">
+          <table className="w-full min-w-[420px] text-sm">
+            <tbody className="divide-y divide-border">
+              <tr>
+                <td className="px-3 py-2 text-ink-muted">Contractual increase</td>
+                <td className="px-3 py-2 text-right font-medium text-ink">
+                  {applied?.increasePercent ?? raise?.percent}%
+                  {raise && (
+                    <span className="ml-2 font-normal text-ink-muted">
+                      (+₱{formatAmount(raise.increaseAmount)})
+                    </span>
+                  )}
+                </td>
+              </tr>
+              <tr>
+                <td className="px-3 py-2 text-ink-muted">Previous Basic Salary</td>
+                <td className="px-3 py-2 text-right text-ink">
+                  {peso(applied ? applied.previousBasicSalary : employee.basicSalary)}
+                </td>
+              </tr>
+              <tr>
+                <td className="px-3 py-2 text-ink-muted">Previous Total Monthly Gross</td>
+                <td className="px-3 py-2 text-right text-ink">
+                  {peso(
+                    applied
+                      ? applied.previousTotalMonthlyGrossCompensation
+                      : employee.totalMonthlyGrossCompensation
+                  )}
+                </td>
+              </tr>
+              <tr>
+                <td className="px-3 py-2 text-ink-muted">New Basic Salary</td>
+                <td className="px-3 py-2 text-right font-semibold text-ink">
+                  {peso(applied ? applied.newBasicSalary : formatAmount(raise!.newBasic))}
+                </td>
+              </tr>
+              <tr>
+                <td className="px-3 py-2 text-ink-muted">New Total Monthly Gross</td>
+                <td className="px-3 py-2 text-right font-semibold text-ink">
+                  {peso(
+                    applied ? applied.newTotalMonthlyGrossCompensation : formatAmount(raise!.newGross)
+                  )}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {(raise || applied) && (
+        <div className="mt-3">
+          <Checkbox
+            checked={!!applied}
+            disabled={!isEditing}
+            onChange={(next) => (next ? onApply() : onRevert())}
+            label="Apply this to the employee's salary on record"
+          />
+          <p className="mt-1 pl-6 text-[11px] text-ink-muted">
+            {applied
+              ? `Applied ${formatDate(applied.appliedAt, "MMMM d, yyyy")}. Clearing this restores ${peso(
+                  applied.previousBasicSalary
+                )} / ${peso(applied.previousTotalMonthlyGrossCompensation)}.`
+              : `The letter prints these figures either way — this replaces the amounts under Compensation as well. Basic is the new gross less the ₱${formatAmount(
+                  FIXED_MONTHLY_ALLOWANCES
+                )} of fixed allowances.`}
+          </p>
+        </div>
+      )}
+
+      {history.length > 0 && (
+        <div className="mt-4">
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-ink-muted">
+            Salary history
+          </h4>
+          <ul className="mt-2 flex flex-col gap-2">
+            {[...history].reverse().map((h) => (
+              <li key={h.id} className="rounded-md bg-background px-3 py-2 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-ink">{h.reason}</span>
+                  <span className="text-ink-muted">{formatDate(h.appliedAt, "MMMM d, yyyy")}</span>
+                </div>
+                <p className="mt-1 text-ink-muted">
+                  Basic {peso(h.previousBasicSalary)} → <span className="text-ink">{peso(h.newBasicSalary)}</span>
+                  {" · "}
+                  Gross {peso(h.previousTotalMonthlyGrossCompensation)} →{" "}
+                  <span className="text-ink">{peso(h.newTotalMonthlyGrossCompensation)}</span>
+                  {h.increasePercent ? ` · ${h.increasePercent}%` : ""}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
   );
 }

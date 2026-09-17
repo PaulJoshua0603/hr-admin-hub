@@ -726,3 +726,105 @@ export async function removeUnderlines(
   return removed;
 }
 
+
+
+/** A column of one line: where it starts, where it ends, and which line it is on. */
+export type TextColumn = { x: number; right: number; y: number };
+
+/**
+ * How far the text under a point should move up the page, and from where.
+ *
+ * A form reserves room for a field by leaving blank lines after it, and it has to reserve
+ * enough for the longest thing anyone might type. Fill in something shorter and the unused
+ * remainder is left as a hole in the middle of the page. `below` is where the reserved
+ * space ended and `by` is how much of it went unused, so everything under it can be
+ * brought up and the page reads continuously whatever was typed.
+ */
+export type TextLift = { below: number; by: number };
+
+/** Word's bottom margin: the footer sits below it and is not part of the body text. */
+const BOTTOM_MARGIN = 72;
+
+/**
+ * Sets a page's type smaller without re-typesetting it.
+ *
+ * Two things have to change together. The size operand of each `Tf` is scaled, which is
+ * what makes the glyphs smaller — the kerning in a `TJ` array is in thousandths of an em,
+ * so it comes down with them and the run simply gets narrower. But Word does not set a
+ * line as one run: it starts a new one, at an absolute position, wherever the formatting
+ * changes — either side of the hyphen in "Pag-IBIG", either side of a superscript "th".
+ * Those keep the position they were given for the larger type, so scaling alone strands
+ * each one to the right of the run it follows and opens a gap in the middle of a word.
+ *
+ * So every run is also brought back towards the start of its own column by the same
+ * proportion. Its own column, not its line: the figure in a table's second cell has to
+ * stay in that cell, and moving it towards the row's left edge would carry it out.
+ *
+ * Only the `1 0 0 1 x y Tm` form is touched, and only where a column is known to contain
+ * it. A run positioned any other way keeps its place, which at worst leaves a gap that was
+ * already there — it never moves text somewhere it does not belong.
+ *
+ * Returns how many sizes were scaled.
+ */
+export async function scaleTextRuns(
+  pdf: PDFDocument,
+  pageIndex: number,
+  factor: number,
+  columns: TextColumn[],
+  lift?: TextLift
+): Promise<number> {
+  const page = pdf.getPages()[pageIndex];
+  if (!page || (factor === 1 && !lift?.by)) return 0;
+  const { refs, texts } = await readContents(pdf, page);
+
+  /** A run sits a little outside the ink of its column: a trailing space, a superscript. */
+  const SLACK = 8;
+  const anchorFor = (x: number, y: number) => {
+    let best: TextColumn | null = null;
+    for (const column of columns) {
+      if (Math.abs(column.y - y) > 2.5) continue;
+      if (x < column.x - 1 || x > column.right + SLACK) continue;
+      // The narrowest match, so a run inside a cell is not anchored to a wider neighbour.
+      if (!best || column.right - column.x < best.right - best.x) best = column;
+    }
+    return best?.x ?? null;
+  };
+
+  let scaled = 0;
+  const edited = texts.map((stream) => {
+    const strings = scanStrings(stream);
+    // A "Tf" or "Tm" inside a string is part of someone's sentence, not an operator.
+    const inString = (at: number) => strings.some((s) => at >= s.start && at < s.end);
+
+    return stream
+      .replace(
+        /(\/[^\s/<>[\]()]+\s+)(\d*\.?\d+)(\s+Tf)/g,
+        (whole, head: string, size: string, tail: string, at: number) => {
+          if (inString(at)) return whole;
+          const next = Number(size) * factor;
+          if (!Number.isFinite(next) || next <= 0) return whole;
+          scaled++;
+          return `${head}${Number(next.toFixed(2))}${tail}`;
+        }
+      )
+      .replace(
+        /1 0 0 1 (-?\d*\.?\d+) (-?\d*\.?\d+) Tm/g,
+        (whole, xs: string, ys: string, at: number) => {
+          if (inString(at)) return whole;
+          const x = Number(xs);
+          const anchor = anchorFor(x, Number(ys));
+          if (anchor === null) return whole;
+          const toX = anchor + (x - anchor) * factor;
+          const y = Number(ys);
+          // Text below the reserved space comes up to close the gap. The bottom margin is
+          // the floor: the page's footer lives under it and must not move with the body.
+          const toY =
+            lift && lift.by > 0 && y <= lift.below && y > BOTTOM_MARGIN ? y + lift.by : y;
+          return `1 0 0 1 ${Number(toX.toFixed(2))} ${Number(toY.toFixed(2))} Tm`;
+        }
+      );
+  });
+
+  if (scaled) writeContents(pdf, refs, edited);
+  return scaled;
+}
