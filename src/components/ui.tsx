@@ -77,12 +77,16 @@ export function CollapsibleSection({
   subtitle,
   count,
   defaultOpen = false,
+  onOpenChange,
   children,
 }: {
   title: string;
   subtitle?: string;
   count?: number;
   defaultOpen?: boolean;
+  /** Told whenever the section is opened or closed — for a caller that defers its own
+   *  work (loading a large template, say) until the section holding it is actually seen. */
+  onOpenChange?: (open: boolean) => void;
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -91,7 +95,12 @@ export function CollapsibleSection({
       <button
         type="button"
         aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
+        onClick={() =>
+          setOpen((o) => {
+            onOpenChange?.(!o);
+            return !o;
+          })
+        }
         className={`flex w-full items-center gap-3 text-left ${FOCUS_RING} rounded-lg`}
       >
         <span

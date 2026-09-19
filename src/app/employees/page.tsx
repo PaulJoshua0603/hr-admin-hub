@@ -1433,13 +1433,21 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
   // Shared classification — the same split the Employees count cards use.
   const coeIndex = resignedCoeIndex(coeRequests);
 
-  // The blank Performance Evaluation form, uploaded once and reused for everyone.
+  /**
+   * The blank Performance Evaluation form, uploaded once and reused for everyone.
+   *
+   * A quarter-megabyte, and this page — the one people land on — used to pull it down on
+   * every visit whether or not the 6th Month tab, the only place it is used, was ever
+   * opened. `autoLoad` only fires once that tab actually is.
+   */
   const { items: perfTemplates, setItems: setPerfTemplates } = useSupabaseStore<{
     id: string;
     dataUrl: string;
     fileName: string;
     uploadedAt: string;
-  }>("hr_perf_eval_template", []);
+  }>("hr_perf_eval_template", [], {
+    autoLoad: category === "milestones" && milestoneType === "sixth",
+  });
   const perfTemplate = perfTemplates[0];
   const [perfBusyId, setPerfBusyId] = useState<string | null>(null);
 

@@ -43,11 +43,16 @@ function readAsDataUrl(file: File): Promise<string> {
 }
 
 export function ER2FormSection() {
-  const { items: templates, hydrated, setItems: setTemplates } = useSupabaseStore<ER2Template>(
+  // This section starts closed, and the template is a six-figure base64 blob that most
+  // visits to Reports never touch — so it is not fetched until the section is actually
+  // opened, rather than on every visit regardless.
+  const [open, setOpen] = useState(false);
+  const { items: templates, setItems: setTemplates } = useSupabaseStore<ER2Template>(
     TEMPLATE_KEY,
-    []
+    [],
+    { autoLoad: open }
   );
-  const { items: forms, add: addForm, update: updateForm, remove: removeForm } =
+  const { items: forms, hydrated, add: addForm, update: updateForm, remove: removeForm } =
     useSupabaseStore<ER2Form>(FORMS_KEY, []);
   const { items: employees } = useSupabaseStore<Employee>("hr_employees", []);
   const { notify } = useNotifications();
@@ -127,7 +132,11 @@ export function ER2FormSection() {
   const openForm = forms.find((f) => f.id === openFormId);
 
   return (
-    <CollapsibleSection title="ER2 Form (PhilHealth Template)" count={forms.length}>
+    <CollapsibleSection
+      title="ER2 Form (PhilHealth Template)"
+      count={forms.length}
+      onOpenChange={setOpen}
+    >
       <p className="mt-1 text-xs text-ink-muted">
         Upload the blank ER2 PDF once, then fill it in here. Downloads are your uploaded sheet with the
         details drawn onto it, so the layout stays exactly as PhilHealth issued it.

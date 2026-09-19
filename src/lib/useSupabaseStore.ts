@@ -73,6 +73,19 @@ export function __resetStores() {
   inflight.clear();
 }
 
+/**
+ * Reads a key's current shared value without subscribing a component to it.
+ *
+ * For a value fetched with `autoLoad: false`: after `await reload()`, the fetch has
+ * already published into the shared cache (that happens before the promise resolves),
+ * but the component's own `items` will not reflect it until React re-renders — which,
+ * inside the same event handler, is too late to read synchronously. This reads the cache
+ * directly instead of waiting on that render.
+ */
+export function getStoreSnapshot<T>(key: string): T[] {
+  return (caches.get(key) as T[] | undefined) ?? [];
+}
+
 function cacheFor<T>(key: string, seed: T[] = []): T[] {
   let cached = caches.get(key);
   if (!cached) {
@@ -95,8 +108,19 @@ function markLoaded(key: string) {
 
 export function useSupabaseStore<T extends { id: string }>(
   key: string,
-  initial: T[] = []
+  initial: T[] = [],
+  options?: {
+    /**
+     * Set to `false` for a key that is large and only sometimes needed — an uploaded PDF
+     * template, say — so it is not pulled down on every visit to a page that merely
+     * mentions it. The caller fetches it themselves, via `reload()`, once it actually
+     * knows the value is wanted; until then `items` stays empty and `hydrated` stays
+     * false, exactly as while a normal load is still in flight.
+     */
+    autoLoad?: boolean;
+  }
 ) {
+  const autoLoad = options?.autoLoad ?? true;
   // Captured once so the snapshot getter stays stable across renders.
   const [seed] = useState(initial);
 
@@ -147,9 +171,13 @@ export function useSupabaseStore<T extends { id: string }>(
   );
 
   useEffect(() => {
-    // Not forced: a key already in the shared cache is not fetched again.
+    if (!autoLoad) return;
+    // Not forced: a key already in the shared cache is not fetched again. Depending on
+    // autoLoad itself means a caller whose condition starts false and later turns true —
+    // "load this template once the employee turns out to need it" — gets the fetch the
+    // moment it does, with nothing more to call.
     load();
-  }, [load]);
+  }, [load, autoLoad]);
 
   const reload = useCallback(() => load(true), [load]);
 

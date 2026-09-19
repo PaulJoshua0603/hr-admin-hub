@@ -118,13 +118,19 @@ export default function EmployeeDetailPage({
   const [draggedItemId, setDraggedItemId] = useState<string | null>(null);
   const [dragOverItemId, setDragOverItemId] = useState<string | null>(null);
   const [newCategoryTitle, setNewCategoryTitle] = useState("");
-  /** The blank Reliever Contract, uploaded once as PDF and reused for everyone. */
+  /**
+   * The blank Reliever Contract, uploaded once as PDF and reused for everyone.
+   *
+   * It runs half a megabyte, and this page mounts it once per employee ever opened —
+   * almost none of whom are relievers. `autoLoad` is tied to that: the fetch happens the
+   * moment this employee turns out to be one, not on every visit to every employee.
+   */
   const { items: relieverTemplates, setItems: setRelieverTemplates } = useSupabaseStore<{
     id: string;
     dataUrl: string;
     fileName: string;
     uploadedAt: string;
-  }>("hr_reliever_template", []);
+  }>("hr_reliever_template", [], { autoLoad: !!employee?.isReliever });
   const relieverTemplate = relieverTemplates[0];
   const [buildingContract, setBuildingContract] = useState(false);
   const { notify } = useNotifications();

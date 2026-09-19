@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { format } from "date-fns";
-import { useSupabaseStore } from "@/lib/useSupabaseStore";
+import { useSupabaseStore, getStoreSnapshot } from "@/lib/useSupabaseStore";
 import { Button, Card, Input } from "@/components/ui";
 import { formatDate, formatTime24 } from "@/lib/dates";
 import { inRange, rangeFor, type RangePreset } from "@/lib/dateRanges";
@@ -52,7 +52,11 @@ export function ReportExportSection() {
   const { items: employees } = useSupabaseStore<Employee>("hr_employees", []);
   const { items: milestoneNotes } = useSupabaseStore<MilestoneNote>("hr_milestone_notes", []);
   const { items: er2Forms } = useSupabaseStore<ER2Form>("hr_er2_forms", []);
-  const { items: er2Templates } = useSupabaseStore<ER2Template>("hr_er2_template", []);
+  // Only its file name is ever read here, and only once someone actually exports — not
+  // worth pulling the template's base64 body down on every visit to Reports for that.
+  const { reload: reloadEr2Template } = useSupabaseStore<ER2Template>("hr_er2_template", [], {
+    autoLoad: false,
+  });
   const { notify } = useNotifications();
 
   const [coverage, setCoverage] = useState<Coverage>("month");
@@ -111,6 +115,10 @@ export function ReportExportSection() {
   async function handleExport() {
     setExporting(true);
     try {
+      // Fetched here rather than kept loaded the whole time this page is open — see the
+      // reload() above.
+      await reloadEr2Template();
+      const er2Templates = getStoreSnapshot<ER2Template>("hr_er2_template");
       const ExcelJS = (await import("exceljs")).default;
       const wb = new ExcelJS.Workbook();
 
