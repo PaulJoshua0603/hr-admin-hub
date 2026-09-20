@@ -5,7 +5,15 @@ import Link from "next/link";
 import { v4 as uuid } from "uuid";
 import { format } from "date-fns";
 import { useSupabaseStore } from "@/lib/useSupabaseStore";
-import { addDaysISO, daysUntil, formatDate, formatTime12, isOverdue, todayISO } from "@/lib/dates";
+import {
+  addDaysISO,
+  addMonthsISO,
+  daysUntil,
+  formatDate,
+  formatTime12,
+  isOverdue,
+  todayISO,
+} from "@/lib/dates";
 import {
   Button,
   Card,
@@ -23,6 +31,7 @@ import {
 } from "@/components/ui";
 import {
   DEFAULT_WORK_LOCATION,
+  EMPLOYMENT_MILESTONE_MONTHS,
   defaultOnboardingChecklist,
   emptyPreEmploymentChecklist,
   emptyRequirements,
@@ -59,6 +68,7 @@ import {
   sixthMonthNoteTone,
 } from "@/lib/milestoneNotes";
 import { EmployeeNameInput } from "@/components/EmployeeNameInput";
+import { employeeNameParts } from "@/lib/employeeNamePdf";
 
 function isProfileComplete(e: Employee): boolean {
   const hasDetails = !!e.birthday && !!e.dateHired;
@@ -1190,13 +1200,129 @@ export default function EmployeesPage() {
 
 type CountGroup = "current" | "newHires" | "resigned";
 
+/** Whoever has not yet reached the 6th-month milestone from their hire date. */
+function isUnderProbation(e: Employee, now: Date = new Date()): boolean {
+  if (!e.dateHired) return false;
+  const sixthMonth = new Date(addMonthsISO(e.dateHired, EMPLOYMENT_MILESTONE_MONTHS.sixthMonth));
+  return sixthMonth.getTime() > now.getTime();
+}
+
+/**
+ * Three sheets: Current Employees (with a New Hires section beneath its total), employees
+ * still under their 6-month probationary period, and Resigned Employees. The full name
+ * prints as one column — a reader filing this by hand wants "Juan Dela Cruz", not three
+ * cells to reassemble — and rows within a sheet are still ordered by surname, because that
+ * is the order a personnel file is kept in even when the column itself is not split.
+ */
+async function exportEmployeeCounts(
+  current: Employee[],
+  newHires: Employee[],
+  resigned: Employee[],
+  coeIndex: Map<string, string>
+) {
+  const ExcelJS = (await import("exceljs")).default;
+  const wb = new ExcelJS.Workbook();
+  type Sheet = ReturnType<InstanceType<typeof ExcelJS.Workbook>["addWorksheet"]>;
+
+  const bySurname = (a: Employee, b: Employee) =>
+    employeeNameParts(a).surname.localeCompare(employeeNameParts(b).surname);
+  // "Dela Cruz, Juan P." — the one column reads in filing order, in normal case rather
+  // than the all-caps the folder label uses.
+  const filingName = (e: Employee) => {
+    const { surname, first, middleInitial } = employeeNameParts(e);
+    if (!surname) return e.name || "";
+    return [`${surname},`, first, middleInitial].filter(Boolean).join(" ");
+  };
+
+  const BASE_COLUMNS = [
+    { header: "Full Name", width: 30 },
+    { header: "Position", width: 24 },
+    { header: "Department", width: 20 },
+    { header: "Immediate Supervisor", width: 24 },
+  ];
+
+  function addRows(ws: Sheet, rows: Employee[], dateLabel: string, extra?: string) {
+    const columns = [...BASE_COLUMNS, { header: dateLabel, width: 18 }];
+    if (extra) columns.push({ header: extra, width: 20 });
+    ws.columns = columns.map((c) => ({ width: c.width }));
+
+    const header = ws.addRow(columns.map((c) => c.header));
+    header.eachCell((c) => {
+      c.font = { bold: true, color: { argb: "FFFFFFFF" } };
+      c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0E5E56" } };
+    });
+
+    [...rows].sort(bySurname).forEach((e) => {
+      const row = [
+        filingName(e),
+        e.position || "",
+        e.department || "",
+        e.immediateSupervisor || "",
+        e.dateHired ? formatDate(e.dateHired, "MMMM d, yyyy") : "",
+      ];
+      if (extra) {
+        const sep = separationDateOf(e, coeIndex);
+        row.push(sep ? formatDate(sep, "MMMM d, yyyy") : "");
+      }
+      ws.addRow(row);
+    });
+  }
+
+  // Current Employees: the active roster, its total, then New Hires as a second section
+  // on the same sheet rather than a sheet of their own.
+  const currentSheet = wb.addWorksheet("Current Employees");
+  addRows(currentSheet, current, "Date Hired");
+  currentSheet.addRow([]);
+  const currentTotal = currentSheet.addRow([`Total Current Employees: ${current.length}`]);
+  currentTotal.getCell(1).font = { bold: true };
+  currentSheet.addRow([]);
+  const newHireTitle = currentSheet.addRow([`New Hires (${newHires.length})`]);
+  newHireTitle.getCell(1).font = { bold: true, color: { argb: "FF0A2E2A" } };
+  newHireTitle.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE4F0EE" } };
+  addRows(currentSheet, newHires, "Onboarding Date");
+  currentSheet.addRow([]);
+  const newHireTotal = currentSheet.addRow([`Total New Hires: ${newHires.length}`]);
+  newHireTotal.getCell(1).font = { bold: true };
+
+  // Under 6-Month Probation: already working, but short of the milestone that ends it.
+  const probationary = current.filter((e) => isUnderProbation(e));
+  const probationSheet = wb.addWorksheet("Under 6-Month Probation");
+  addRows(probationSheet, probationary, "Date Hired");
+  probationSheet.addRow([]);
+  const probationTotal = probationSheet.addRow([`Total: ${probationary.length}`]);
+  probationTotal.getCell(1).font = { bold: true };
+
+  // Resigned Employees.
+  const resignedSheet = wb.addWorksheet("Resigned Employees");
+  addRows(resignedSheet, resigned, "Date Hired", "Date of Resignation");
+  resignedSheet.addRow([]);
+  const resignedTotal = resignedSheet.addRow([`Total: ${resigned.length}`]);
+  resignedTotal.getCell(1).font = { bold: true };
+
+  const buffer = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buffer], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `Employees - ${format(new Date(), "MMMM d, yyyy")}.xlsx`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  return current.length + newHires.length + resigned.length;
+}
+
 function EmployeeCountSummary({ employees }: { employees: Employee[] }) {
   const [openGroup, setOpenGroup] = useState<CountGroup | null>(null);
   const [search, setSearch] = useState("");
+  const [exporting, setExporting] = useState(false);
   const { items: coeRequests } = useSupabaseStore<COERequest>("hr_coe_requests", []);
+  const { notify } = useNotifications();
 
   // Same split the Active/Resigned view uses, so the two screens cannot disagree.
-  const { active: current, newHires, resigned } = groupEmployees(employees, coeRequests);
+  const { active: current, newHires, resigned, coeIndex } = groupEmployees(employees, coeRequests);
 
   const groups: { key: CountGroup; label: string; list: Employee[] }[] = [
     { key: "current", label: "Current Employees", list: current },
@@ -1235,6 +1361,23 @@ function EmployeeCountSummary({ employees }: { employees: Employee[] }) {
           />
         ))}
       </div>
+
+      <Button
+        onClick={async () => {
+          setExporting(true);
+          try {
+            const count = await exportEmployeeCounts(current, newHires, resigned, coeIndex);
+            notify(`Exported ${count} employee(s) across 3 sheets`, "created");
+          } finally {
+            setExporting(false);
+          }
+        }}
+        disabled={exporting}
+        className="mt-3"
+        title="One sheet each for Current Employees, New Hires, and Resigned Employees"
+      >
+        {exporting ? "Exporting…" : "Export to Excel"}
+      </Button>
 
       {active && (
         <Card className="mt-4">
@@ -1683,134 +1826,6 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
    * Mirrors the on-screen Active/Resigned lists — every employee, not just those whose
    * dates fall in the selected range, and counting COE-for-Resigned records the same way.
    */
-  function computeActiveResigned() {
-    // Ordered exactly as the lists on screen are, so the sheet reads the same way.
-    const byHired = (direction: "newest" | "soonest") => (a: Employee, b: Employee) =>
-      byDate(direction)({ date: a.dateHired || "" }, { date: b.dateHired || "" });
-    const active = employees
-      .filter((e) => separationDate(e) === null && !isAwaitingOnboarding(e))
-      .sort(byHired("newest"));
-    const newHires = employees
-      .filter((e) => separationDate(e) === null && isAwaitingOnboarding(e))
-      .sort(byHired("soonest"));
-    const resigned = employees
-      .filter((e) => separationDate(e) !== null)
-      .sort((a, b) =>
-        byDate("newest")({ date: separationDate(a) || "" }, { date: separationDate(b) || "" })
-      );
-    return { active, newHires, resigned };
-  }
-
-  async function handleExportActiveResigned() {
-    setExporting(true);
-    try {
-      const ExcelJS = (await import("exceljs")).default;
-      const wb = new ExcelJS.Workbook();
-
-      function buildSheet(sheetName: string) {
-        const ws = wb.addWorksheet(sheetName);
-        ws.columns = [{ width: 26 }, { width: 22 }, { width: 20 }, { width: 28 }, { width: 16 }];
-        const { active, newHires, resigned } = computeActiveResigned();
-
-        const activeTitle = ws.addRow([`Active Employees (${active.length})`]);
-        ws.mergeCells(activeTitle.number, 1, activeTitle.number, 5);
-        activeTitle.getCell(1).font = { bold: true, color: { argb: "FF0A2E2A" } };
-        activeTitle.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE4F0EE" } };
-        const activeHeader = ws.addRow([
-          "Employee Name",
-          "Position",
-          "Department",
-          "Email",
-          "Hired/Onboarding Date",
-        ]);
-        activeHeader.eachCell((c) => {
-          c.font = { bold: true, color: { argb: "FFFFFFFF" } };
-          c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0E5E56" } };
-        });
-        active.forEach((e) =>
-          ws.addRow([
-            e.name,
-            e.position || "",
-            e.department || "",
-            e.realcognitaEmail || "",
-            e.dateHired ? formatDate(e.dateHired, "MMMM d, yyyy") : "—",
-          ])
-        );
-        ws.addRow([]);
-
-        const newHireTitle = ws.addRow([`New Hires — not yet onboarded (${newHires.length})`]);
-        ws.mergeCells(newHireTitle.number, 1, newHireTitle.number, 5);
-        newHireTitle.getCell(1).font = { bold: true, color: { argb: "FF0A2E2A" } };
-        newHireTitle.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE4F0EE" } };
-        const newHireHeader = ws.addRow(["Employee Name", "Position", "Department", "Email", "Onboarding Date"]);
-        newHireHeader.eachCell((c) => {
-          c.font = { bold: true, color: { argb: "FFFFFFFF" } };
-          c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0E5E56" } };
-        });
-        newHires.forEach((e) =>
-          ws.addRow([
-            e.name,
-            e.position || "",
-            e.department || "",
-            e.realcognitaEmail || "",
-            e.dateHired ? formatDate(e.dateHired, "MMMM d, yyyy") : "—",
-          ])
-        );
-        ws.addRow([]);
-
-        const resignedTitle = ws.addRow([`Resigned Employees (${resigned.length})`]);
-        ws.mergeCells(resignedTitle.number, 1, resignedTitle.number, 6);
-        resignedTitle.getCell(1).font = { bold: true, color: { argb: "FF0A2E2A" } };
-        resignedTitle.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE4F0EE" } };
-        const resignedHeader = ws.addRow([
-          "Employee Name",
-          "Position",
-          "Department",
-          "Email",
-          "Separation Date",
-          "Reason",
-        ]);
-        resignedHeader.eachCell((c) => {
-          c.font = { bold: true, color: { argb: "FFFFFFFF" } };
-          c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0E5E56" } };
-        });
-        resigned.forEach((e) =>
-          ws.addRow([
-            e.name,
-            e.position || "",
-            e.department || "",
-            e.realcognitaEmail || "",
-            separationDate(e) ? formatDate(separationDate(e)!, "MMMM d, yyyy") : "—",
-            separationReason(e, coeIndex),
-          ])
-        );
-        ws.addRow([]);
-        const totalRow = ws.addRow([
-          `Total: ${active.length + newHires.length + resigned.length} ` +
-            `(Active: ${active.length}, New Hires: ${newHires.length}, Resigned: ${resigned.length})`,
-        ]);
-        totalRow.getCell(1).font = { bold: true };
-      }
-
-      // Both lists cover everyone on file, so one sheet says it all.
-      buildSheet("Active & Resigned");
-
-      const buffer = await wb.xlsx.writeBuffer();
-      const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `Active and Resigned Employees - ${format(today, "MMMM d, yyyy")}.xlsx`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-      notify("Exported Active/Resigned report to Excel", "created");
-    } finally {
-      setExporting(false);
-    }
-  }
-
   async function handleExportNewHires() {
     setExporting(true);
     try {
@@ -2113,11 +2128,6 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                 {exporting ? "Exporting…" : "Export to Excel"}
               </Button>
             )}
-            {category === "activeResigned" && (
-              <Button onClick={handleExportActiveResigned} disabled={exporting} className="ml-auto">
-                {exporting ? "Exporting…" : "Export to Excel"}
-              </Button>
-            )}
             {category === "newHires" && (
               <Button onClick={handleExportNewHires} disabled={exporting} className="ml-auto">
                 {exporting ? "Exporting…" : "Export to Excel"}
@@ -2264,6 +2274,9 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                         <th className="px-3 py-2">{dateColumnLabel}</th>
                         {isMilestoneView && <th className="px-3 py-2">Notes</th>}
                         {milestoneType === "sixth" && isMilestoneView && (
+                          <th className="px-3 py-2">6-Month Salary Review</th>
+                        )}
+                        {milestoneType === "sixth" && isMilestoneView && (
                           <th className="px-3 py-2">Performance Evaluation</th>
                         )}
                       </tr>
@@ -2308,6 +2321,55 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                                   className="min-w-[160px]"
                                 />
                               )}
+                            </td>
+                          )}
+                          {milestoneType === "sixth" && isMilestoneView && (
+                            <td className="px-3 py-2">
+                              <div className="flex flex-col gap-1.5">
+                                <select
+                                  value={
+                                    employees.find((e) => e.id === r.id)?.sixthMonthSalaryReview ||
+                                    "asIs"
+                                  }
+                                  onChange={(e) => {
+                                    const review = e.target.value as "asIs" | "withIncrease";
+                                    updateEmployee(r.id, {
+                                      sixthMonthSalaryReview: review,
+                                      // Clearing the contract percentage when "As Is" is chosen
+                                      // keeps it from silently computing a raise nobody meant —
+                                      // the letters and the Compensation panel both read it.
+                                      ...(review === "asIs" ? { regularizationIncreasePercent: "" } : {}),
+                                    });
+                                  }}
+                                  className="h-9 min-w-[130px] rounded-lg border border-border bg-background px-2 text-sm text-ink"
+                                >
+                                  <option value="asIs">As Is Salary</option>
+                                  <option value="withIncrease">With Increase</option>
+                                </select>
+                                {employees.find((e) => e.id === r.id)?.sixthMonthSalaryReview ===
+                                  "withIncrease" && (
+                                  <span className="relative">
+                                    <Input
+                                      type="text"
+                                      inputMode="decimal"
+                                      placeholder="e.g. 17"
+                                      className="w-24 pr-6 text-sm"
+                                      defaultValue={
+                                        employees.find((e) => e.id === r.id)
+                                          ?.regularizationIncreasePercent || ""
+                                      }
+                                      onBlur={(e) =>
+                                        updateEmployee(r.id, {
+                                          regularizationIncreasePercent: e.target.value,
+                                        })
+                                      }
+                                    />
+                                    <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-ink-muted">
+                                      %
+                                    </span>
+                                  </span>
+                                )}
+                              </div>
                             </td>
                           )}
                           {milestoneType === "sixth" && isMilestoneView && (

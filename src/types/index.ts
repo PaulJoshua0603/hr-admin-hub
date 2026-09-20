@@ -552,6 +552,12 @@ export type Employee = {
   basicGrossSalary?: string;
   /** Regularization increase promised by the contract, as a percentage, e.g. "17". */
   regularizationIncreasePercent?: string;
+  /**
+   * Whether the 6-Month Salary Review found a raise or not — set from the Advanced
+   * Filtering milestone list. "withIncrease" is only meaningful alongside a value in
+   * `regularizationIncreasePercent`, which is the one field the letters actually read.
+   */
+  sixthMonthSalaryReview?: "asIs" | "withIncrease";
   /** Every raise applied to this record, newest last. */
   salaryHistory?: SalaryChange[];
   // Identification & profile

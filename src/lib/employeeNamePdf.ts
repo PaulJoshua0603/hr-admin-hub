@@ -14,29 +14,29 @@ function middleInitial(middle: string): string {
 }
 
 /**
- * "FRANCISCO, RIANNE MEGG N."
+ * Surname, first name(s), and middle initial, worked out from whatever the record has.
  *
  * The name parts captured on import are used when they are there. The handful of records
  * that predate them keep only a display name like "Rianne Megg N. Francisco", so for those
  * the surname is worked out from the name itself — the last word, except that a suffix
- * belongs to the surname ("CASTILLO JR., ERNESTO P.") and so do the particles of a
- * compound one ("SAN PEDRO III, LIM P."). A single letter in the middle is the initial.
+ * belongs to the surname ("Castillo Jr.") and so do the particles of a compound one ("San
+ * Pedro III"). A single letter among what is left is the middle initial, not a given name.
+ *
+ * Every piece is returned exactly as cased in the source; callers that want it upper-cased
+ * — the filing label, an export column — do that themselves.
  */
-export function employeeNameLabel(
+export function employeeNameParts(
   e: Pick<Employee, "name" | "firstName" | "middleName" | "lastName">
-): string {
+): { surname: string; first: string; middleInitial: string } {
   const last = (e.lastName || "").trim();
   const first = (e.firstName || "").trim();
   if (last && first) {
-    return [`${last},`, first, middleInitial(e.middleName || "")]
-      .filter(Boolean)
-      .join(" ")
-      .toUpperCase();
+    return { surname: last, first, middleInitial: middleInitial(e.middleName || "") };
   }
 
   const parts = (e.name || "").trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "";
-  if (parts.length === 1) return parts[0].toUpperCase();
+  if (parts.length === 0) return { surname: "", first: "", middleInitial: "" };
+  if (parts.length === 1) return { surname: parts[0], first: "", middleInitial: "" };
 
   const SUFFIXES = /^(jr|sr|ii|iii|iv|v)\.?$/i;
   let cut = parts.length - 1;
@@ -52,7 +52,16 @@ export function employeeNameLabel(
   const initial = initialAt >= 0 ? middleInitial(given[initialAt]) : "";
   const rest = given.filter((_, i) => i !== initialAt).join(" ");
 
-  return [`${surname},`, rest, initial].filter(Boolean).join(" ").toUpperCase();
+  return { surname, first: rest, middleInitial: initial };
+}
+
+/** "FRANCISCO, RIANNE MEGG N." — see {@link employeeNameParts} for how each piece is found. */
+export function employeeNameLabel(
+  e: Pick<Employee, "name" | "firstName" | "middleName" | "lastName">
+): string {
+  const { surname, first, middleInitial } = employeeNameParts(e);
+  if (!surname) return "";
+  return [`${surname},`, first, middleInitial].filter(Boolean).join(" ").toUpperCase();
 }
 
 /** "Rianne Megg N. Francisco - Employee Name.pdf" */
