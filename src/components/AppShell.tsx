@@ -10,6 +10,7 @@ import PageTransition from "@/components/PageTransition";
 import ThemeToggle from "@/components/ThemeToggle";
 import GlobalSearch from "@/components/GlobalSearch";
 import { useAuth } from "@/lib/authContext";
+import { useIsOffline } from "@/lib/useSupabaseStore";
 import {
   ClockIcon,
   EmployeesIcon,
@@ -77,6 +78,23 @@ function HeaderClock() {
           {weekdayStr}, {dateStr}
         </span>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Shown the moment a request to Supabase fails — a dropped connection, or the project
+ * refusing traffic once an egress quota is spent — so a blank or stale-looking screen
+ * reads as "we know, and it's temporary" rather than as the Hub being broken. It clears
+ * itself the instant a request succeeds again, with nothing for anyone to dismiss.
+ */
+function OfflineBanner() {
+  const offline = useIsOffline();
+  if (!offline) return null;
+  return (
+    <div className="shrink-0 border-b border-warn/30 bg-warn/10 px-3 py-2 text-center text-xs text-warn sm:px-5 md:px-8">
+      Can&apos;t reach the server right now — showing the last data saved to this device.
+      Changes you make here will be saved once the connection is back.
     </div>
   );
 }
@@ -212,6 +230,7 @@ function ProtectedShell({ children }: { children: React.ReactNode }) {
               {user && <ProfileCard user={user} variant="header" />}
             </div>
           </header>
+          <OfflineBanner />
           <main className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-3 py-5 sm:px-5 sm:py-6 md:px-8 md:py-8">
             <PageTransition>{children}</PageTransition>
           </main>

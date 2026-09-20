@@ -30,6 +30,65 @@ const inflight = new Map<string, Promise<void>>();
 export const STORE_FRESHNESS_MS = 60_000;
 
 /**
+ * A local backup of the last value Supabase actually returned, so a request that fails —
+ * a network drop, or Supabase itself refusing traffic once an egress quota is spent — does
+ * not leave the app showing an empty list where the user's data used to be. It is written
+ * every time a key is published, successful load or local write alike, and read only when
+ * a live request has just failed.
+ */
+const MIRROR_PREFIX = "hr_offline_mirror:";
+
+function readMirror<T>(key: string): T[] | null {
+  try {
+    const raw = window.localStorage.getItem(MIRROR_PREFIX + key);
+    return raw ? (JSON.parse(raw) as T[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeMirror(key: string, value: unknown[]) {
+  try {
+    window.localStorage.setItem(MIRROR_PREFIX + key, JSON.stringify(value));
+  } catch {
+    // Over the browser's storage quota, or storage is unavailable (a private window). The
+    // mirror is a convenience, not a requirement, so this is skipped rather than surfaced.
+  }
+}
+
+/**
+ * Whether any key's most recent load or save actually reached Supabase. False the moment
+ * a request fails, true again as soon as one succeeds — so the app-wide "showing saved
+ * data" banner clears itself the instant the connection (or the quota) recovers.
+ */
+const offlineKeys = new Set<string>();
+const offlineListeners = new Set<() => void>();
+
+function setOffline(key: string, offline: boolean) {
+  const was = offlineKeys.has(key);
+  if (offline === was) return;
+  if (offline) offlineKeys.add(key);
+  else offlineKeys.delete(key);
+  offlineListeners.forEach((fn) => fn());
+}
+
+/**
+ * True while at least one store's last attempt to reach Supabase failed. One request
+ * failing for this reason means the rest likely will too, so this is deliberately a single
+ * app-wide flag rather than one per key — simpler to show, and just as informative.
+ */
+export function useIsOffline(): boolean {
+  return useSyncExternalStore(
+    (onChange) => {
+      offlineListeners.add(onChange);
+      return () => offlineListeners.delete(onChange);
+    },
+    () => offlineKeys.size > 0,
+    () => false
+  );
+}
+
+/**
  * Loads a key at most once, no matter how many components ask for it.
  *
  * Several components read the same key on one screen — the Employees page alone mounts
@@ -71,6 +130,7 @@ export function __resetStores() {
   loadedKeys.clear();
   loadedAt.clear();
   inflight.clear();
+  offlineKeys.clear();
 }
 
 /**
@@ -97,6 +157,7 @@ function cacheFor<T>(key: string, seed: T[] = []): T[] {
 
 function publish(key: string, next: unknown[]) {
   caches.set(key, next);
+  writeMirror(key, next);
   subscribers.get(key)?.forEach((fn) => fn());
 }
 
@@ -158,12 +219,23 @@ export function useSupabaseStore<T extends { id: string }>(
               return null;
             }
           }
-          const { data, error } = await supabase
-            .from("app_store")
-            .select("value")
-            .eq("key", key)
-            .maybeSingle();
-          return !error && data?.value ? (data.value as T[]) : null;
+          try {
+            const { data, error } = await supabase
+              .from("app_store")
+              .select("value")
+              .eq("key", key)
+              .maybeSingle();
+            if (error) throw error;
+            setOffline(key, false);
+            // No row yet is a legitimate empty state, not a failure — nothing to publish.
+            return data?.value ? (data.value as T[]) : null;
+          } catch {
+            // The request itself failed — a dropped connection, or Supabase refusing
+            // traffic once an egress quota is spent. Whatever was last seen for this key,
+            // in this tab or a previous one, is better than showing nothing at all.
+            setOffline(key, true);
+            return readMirror<T>(key);
+          }
         },
         force
       ),
@@ -192,11 +264,20 @@ export function useSupabaseStore<T extends { id: string }>(
         }
         return;
       }
-      await supabase
-        .from("app_store")
-        .upsert({ key, value: next, updated_at: new Date().toISOString() });
-      // The cache now holds exactly what the source holds, so nothing needs re-reading.
-      loadedAt.set(key, Date.now());
+      try {
+        const { error } = await supabase
+          .from("app_store")
+          .upsert({ key, value: next, updated_at: new Date().toISOString() });
+        if (error) throw error;
+        setOffline(key, false);
+        // The cache now holds exactly what the source holds, so nothing needs re-reading.
+        loadedAt.set(key, Date.now());
+      } catch {
+        // The change is already visible locally (published above) and mirrored to
+        // localStorage, so nothing is lost from under the user — but it has not actually
+        // reached Supabase, and the offline banner is what tells them that.
+        setOffline(key, true);
+      }
     },
     [key]
   );
