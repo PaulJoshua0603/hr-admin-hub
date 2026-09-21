@@ -5,7 +5,7 @@ import { v4 as uuid } from "uuid";
 import { useSupabaseStore } from "@/lib/useSupabaseStore";
 import { Button, Card, CollapsibleSection, Input, SectionHeading } from "@/components/ui";
 import { EmployeeNameInput } from "@/components/EmployeeNameInput";
-import { addMonthsISO, formatDate, formatTime24, todayISO } from "@/lib/dates";
+import { addMonthsISO, formatDate, formatTime12, todayISO } from "@/lib/dates";
 import { useNotifications } from "@/lib/notificationContext";
 import type {
   ER2ReportRow,
@@ -15,8 +15,9 @@ import type {
   CustomReportTable,
   COERequest,
   COECategory,
+  EventStatus,
 } from "@/types";
-import { EMPLOYMENT_MILESTONE_MONTHS } from "@/types";
+import { EMPLOYMENT_MILESTONE_MONTHS, EVENT_STATUS_LABELS } from "@/types";
 import { ReportExportSection } from "./ExportSection";
 import { SixthMonthReport } from "./SixthMonthReport";
 import { ER2FormSection } from "./ER2FormSection";
@@ -709,10 +710,50 @@ function COECategoryTable({
 
 /* ------------------------------ Events Attended ------------------------------ */
 
-type EventDraft = { eventName: string; date: string; time: string; endTime: string; location: string };
+type EventDraft = {
+  eventName: string;
+  date: string;
+  time: string;
+  endTime: string;
+  location: string;
+  status?: EventStatus;
+};
 
 function emptyEventDraft(): EventDraft {
   return { eventName: "", date: todayISO().slice(0, 10), time: "", endTime: "", location: "" };
+}
+
+/**
+ * How an event turned out. Left unset until someone says — an event nobody has reported on
+ * is not the same as one that went ahead, so the untouched state carries no colour at all.
+ */
+function EventStatusSelect({
+  value,
+  onChange,
+}: {
+  value?: EventStatus;
+  onChange: (value: EventStatus | undefined) => void;
+}) {
+  const tone =
+    value === "done"
+      ? "bg-success-soft text-success ring-success/20"
+      : value === "cancelled"
+        ? "bg-warn-soft text-warn ring-warn/20"
+        : "bg-background text-ink-muted ring-border";
+  return (
+    <select
+      value={value || ""}
+      onChange={(e) => onChange((e.target.value || undefined) as EventStatus | undefined)}
+      className={`h-8 min-w-[120px] cursor-pointer appearance-none rounded-full border-0 px-3 text-xs font-semibold ring-1 ring-inset ${tone}`}
+    >
+      <option value="">— Set status —</option>
+      {(Object.keys(EVENT_STATUS_LABELS) as EventStatus[]).map((key) => (
+        <option key={key} value={key}>
+          {EVENT_STATUS_LABELS[key]}
+        </option>
+      ))}
+    </select>
+  );
 }
 
 function EventsTable() {
@@ -733,6 +774,7 @@ function EventsTable() {
       time: form.time,
       endTime: form.endTime,
       location: form.location,
+      status: form.status,
     });
     setForm(emptyEventDraft());
     notify("Event row added", "created");
@@ -746,6 +788,7 @@ function EventsTable() {
       time: r.time,
       endTime: r.endTime || "",
       location: r.location,
+      status: r.status,
     });
   }
 
@@ -757,6 +800,7 @@ function EventsTable() {
       time: draft.time,
       endTime: draft.endTime,
       location: draft.location,
+      status: draft.status,
     });
     setEditingId(null);
     notify("Event row updated", "updated");
@@ -793,6 +837,7 @@ function EventsTable() {
                 <th className="px-3 py-2">Start Time</th>
                 <th className="px-3 py-2">End Time</th>
                 <th className="px-3 py-2">Location</th>
+                <th className="px-3 py-2">Status</th>
                 <th className="px-3 py-2" />
               </tr>
             </thead>
@@ -816,6 +861,12 @@ function EventsTable() {
                       <Input value={draft.location} onChange={(e) => setDraft((d) => ({ ...d, location: e.target.value }))} />
                     </td>
                     <td className="px-3 py-2">
+                      <EventStatusSelect
+                        value={draft.status}
+                        onChange={(status) => setDraft((d) => ({ ...d, status }))}
+                      />
+                    </td>
+                    <td className="px-3 py-2">
                       <EditActions onSave={() => saveEdit(r.id)} onCancel={() => setEditingId(null)} />
                     </td>
                   </tr>
@@ -823,9 +874,15 @@ function EventsTable() {
                   <tr key={r.id} className="border-t border-border">
                     <td className="px-3 py-2 text-ink">{r.eventName}</td>
                     <td className="px-3 py-2 text-ink-muted">{formatDate(r.date, "MMMM d, yyyy")}</td>
-                    <td className="px-3 py-2 text-ink-muted">{formatTime24(r.time) || "—"}</td>
-                    <td className="px-3 py-2 text-ink-muted">{formatTime24(r.endTime || "") || "—"}</td>
+                    <td className="px-3 py-2 text-ink-muted">{formatTime12(r.time) || "—"}</td>
+                    <td className="px-3 py-2 text-ink-muted">{formatTime12(r.endTime || "") || "—"}</td>
                     <td className="px-3 py-2 text-ink-muted">{r.location || "—"}</td>
+                    <td className="px-3 py-2">
+                      <EventStatusSelect
+                        value={r.status}
+                        onChange={(status) => update(r.id, { status })}
+                      />
+                    </td>
                     <td className="px-3 py-2">
                       <RowActions
                         onEdit={() => startEdit(r)}
@@ -852,8 +909,8 @@ type PlanDraft = { plan: string; startDate: string; endDate: string };
 
 function PlanTable() {
   const { items, hydrated, add, update, remove } = useSupabaseStore<PlanReportRow>("hr_report_plans", []);
-  /** Most recent plan first, by the week it starts. */
-  const sortedItems = [...items].sort((a, b) => (a.startDate < b.startDate ? 1 : -1));
+  /** Nearest upcoming date first, so the plan that comes due soonest is what's on top. */
+  const sortedItems = [...items].sort((a, b) => (a.startDate < b.startDate ? -1 : 1));
   const { notify } = useNotifications();
   const [form, setForm] = useState<PlanDraft>({ plan: "", startDate: todayISO().slice(0, 10), endDate: todayISO().slice(0, 10) });
   const [editingId, setEditingId] = useState<string | null>(null);

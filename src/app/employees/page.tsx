@@ -62,13 +62,19 @@ import {
   separationReason,
 } from "@/lib/employeeStatus";
 import {
-  SIXTH_MONTH_NOTE_REFERENCE,
+  NOT_SET_LABEL,
+  milestoneNoteTone,
   sixthMonthNoteLabels,
   sixthMonthNoteOptions,
-  sixthMonthNoteTone,
+  thirdMonthNoteLabels,
+  thirdMonthNoteOptions,
 } from "@/lib/milestoneNotes";
 import { EmployeeNameInput } from "@/components/EmployeeNameInput";
 import { employeeNameParts } from "@/lib/employeeNamePdf";
+import {
+  buildThirdMonthEvaluationDocx,
+  thirdMonthEvaluationFileName,
+} from "@/lib/thirdMonthEvaluation";
 
 function isProfileComplete(e: Employee): boolean {
   const hasDetails = !!e.birthday && !!e.dateHired;
@@ -1545,20 +1551,6 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
   const [countSearch, setCountSearch] = useState("");
   const { update: updateEmployee } = useSupabaseStore<Employee>("hr_employees", []);
 
-  function applyPreset(p: TimeframePreset) {
-    setPreset(p);
-    if (p === "week") {
-      setStartDate(startOfWeekISO(today));
-      setEndDate(endOfWeekISO(today));
-    } else if (p === "month") {
-      setStartDate(startOfMonthISO(today));
-      setEndDate(endOfMonthISO(today));
-    } else if (p === "year") {
-      setStartDate(startOfYearISO(today));
-      setEndDate(endOfYearISO(today));
-    }
-  }
-
   function noteFor(employeeId: string, type: MilestoneType): string {
     const n = milestoneNotes.find((m) => m.employeeId === employeeId && m.milestoneType === type);
     return n?.note || "";
@@ -1593,6 +1585,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
   });
   const perfTemplate = perfTemplates[0];
   const [perfBusyId, setPerfBusyId] = useState<string | null>(null);
+  const [thirdBusyId, setThirdBusyId] = useState<string | null>(null);
 
   async function uploadPerfTemplate(file: File) {
     if (file.size > 8 * 1024 * 1024) {
@@ -1609,6 +1602,74 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
       { id: "template", dataUrl, fileName: file.name, uploadedAt: todayISO() },
     ]);
     notify(`Performance Evaluation template saved (${file.name})`, "created");
+  }
+
+  /**
+   * The blank 3rd Month Probationary Evaluation, as a Word file. Loaded on the same terms
+   * as the 6th-month one: only once the tab that uses it is open.
+   */
+  const { items: thirdTemplates, setItems: setThirdTemplates } = useSupabaseStore<{
+    id: string;
+    dataUrl: string;
+    fileName: string;
+    uploadedAt: string;
+  }>("hr_third_month_eval_template", [], {
+    autoLoad: category === "milestones" && milestoneType === "third",
+  });
+  const thirdTemplate = thirdTemplates[0];
+
+  async function uploadThirdTemplate(file: File) {
+    if (!/\.docx$/i.test(file.name)) {
+      notify("The 3rd Month evaluation template needs to be a Word (.docx) file.", "warn");
+      return;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      notify("That file is over 8MB — save a lighter copy and try again.", "warn");
+      return;
+    }
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(new Error("read failed"));
+      reader.readAsDataURL(file);
+    });
+    setThirdTemplates([{ id: "template", dataUrl, fileName: file.name, uploadedAt: todayISO() }]);
+    notify(`3rd Month evaluation template saved (${file.name})`, "created");
+  }
+
+  /** Puts one employee's name on the 3rd-month form and downloads it as Word. */
+  async function downloadThirdEval(row: FilterRow) {
+    if (!thirdTemplate) {
+      notify("Upload the blank 3rd Month Evaluation (.docx) first.", "warn");
+      return;
+    }
+    const employee = employees.find((e) => e.id === row.id);
+    if (!employee) return;
+    setThirdBusyId(row.id);
+    try {
+      const result = await buildThirdMonthEvaluationDocx(thirdTemplate.dataUrl, employee);
+      const url = URL.createObjectURL(result.blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = thirdMonthEvaluationFileName(employee.name);
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      notify(
+        result.named
+          ? `3rd Month Evaluation ready for ${employee.name}`
+          : "Downloaded, but the template has no “NAME:” line — the name will need writing in.",
+        result.named ? "created" : "warn"
+      );
+    } catch (err) {
+      notify(
+        `Could not build the form: ${err instanceof Error ? err.message : "Unknown error"}`,
+        "warn"
+      );
+    } finally {
+      setThirdBusyId(null);
+    }
   }
 
   /** Fills the template for one employee and downloads it under their name. */
@@ -1869,89 +1930,116 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
     }
   }
 
+  /**
+   * Exports the milestone currently being looked at, and only that one, split into a
+   * sheet per calendar month falling inside the chosen date range.
+   *
+   * It used to write all five milestones into one workbook regardless of what was on
+   * screen, which meant every export had to be pruned by hand before it could be sent on.
+   */
   async function handleExport() {
     setExporting(true);
     try {
       const ExcelJS = (await import("exceljs")).default;
       const wb = new ExcelJS.Workbook();
 
-      type Sheet = ReturnType<InstanceType<typeof ExcelJS.Workbook>["addWorksheet"]>;
+      const type = milestoneType;
+      const isThird = type === "third";
+      const isSixth = type === "sixth";
+      const isReliever = type === "relieverEnd";
 
-      /** Prints what each 6th-month status means under the sheet, for whoever reads the file. */
-      function appendNoteReference(ws: Sheet) {
-        ws.addRow([]);
-        const caption = ws.addRow(["Notes — dropdown options and meanings"]);
-        caption.getCell(1).font = { bold: true, size: 12 };
-        const header = ws.addRow(["Dropdown Option", "Meaning"]);
-        header.eachCell((cell, col) => {
-          if (col > 2) return;
-          cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
-          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0E5E56" } };
-        });
-        SIXTH_MONTH_NOTE_REFERENCE.forEach(([option, meaning]) => {
-          const row = ws.addRow([option, meaning]);
-          row.getCell(1).font = { bold: true };
-          row.getCell(2).alignment = { wrapText: true };
-        });
+      /** What each sheet is called inside, e.g. "September 3rd Month Assessment". */
+      const sheetTitle = (monthLabel: string) =>
+        isThird || isSixth
+          ? `${monthLabel} ${MILESTONE_LABELS[type]} Assessment`
+          : `${monthLabel} ${MILESTONE_LABELS[type]}`;
+
+      const columns = isThird
+        ? ["Employee Name", "Position", "Department", "Immediate Supervisor", "3rd Month Date"]
+        : isSixth
+          ? [
+              "Employee Name",
+              "Position",
+              "Department",
+              "Salary Status",
+              "Salary Increase Percentage",
+              "6th Month Date",
+            ]
+          : [
+              "Employee Name",
+              "Position",
+              "Department",
+              "Immediate Supervisor",
+              "Email",
+              ...(isReliever
+                ? ["Employee Being Replaced", "Reason for Replacement", "Position Being Replaced"]
+                : []),
+              isReliever ? "Reliever Contract End Date" : MILESTONE_LABELS[type],
+              "Notes",
+            ];
+
+      /** The salary review as the export states it, straight off the employee record. */
+      function salaryCells(id: string): [string, string] {
+        const e = employees.find((x) => x.id === id);
+        const review = e?.sixthMonthSalaryReview;
+        if (review === "withIncrease") {
+          const percent = (e?.regularizationIncreasePercent || "").trim();
+          return ["With Increase", percent ? `${percent}%` : ""];
+        }
+        if (review === "asIs") return ["As Is Salary", "N/A"];
+        // Never "As Is Salary" by default — nothing has been decided for this employee yet.
+        return [NOT_SET_LABEL, ""];
       }
 
-      function buildSheet(sheetName: string, type: MilestoneType, sheetRows: FilterRow[]) {
-        const ws = wb.addWorksheet(sheetName);
-        ws.columns = [
-          { width: 26 },
-          { width: 26 },
-          { width: 20 },
-          { width: 22 },
-          { width: 28 },
-          { width: 18 },
-          { width: 24 },
+      function rowFor(r: FilterRow): (string | number)[] {
+        if (isThird) {
+          return [r.name, r.position, r.department, r.supervisor, formatDate(r.date, "MMMM d, yyyy")];
+        }
+        if (isSixth) {
+          const [status, percent] = salaryCells(r.id);
+          return [r.name, r.position, r.department, status, percent, formatDate(r.date, "MMMM d, yyyy")];
+        }
+        return [
+          r.name,
+          r.position,
+          r.department,
+          r.supervisor,
+          r.email,
+          ...(isReliever
+            ? [r.replacedName || "", r.replacedReason || "", r.replacedPosition || ""]
+            : []),
+          formatDate(r.date, "MMMM d, yyyy"),
+          noteFor(r.id, type),
         ];
-        const titleRow = ws.addRow([sheetName]);
-        ws.mergeCells(titleRow.number, 1, titleRow.number, 7);
+      }
+
+      function buildSheet(monthLabel: string, sheetName: string, sheetRows: FilterRow[]) {
+        const ws = wb.addWorksheet(sheetName);
+        ws.columns = columns.map((c) => ({ width: c.length < 16 ? 22 : c.length + 6 }));
+
+        const titleRow = ws.addRow([sheetTitle(monthLabel)]);
+        ws.mergeCells(titleRow.number, 1, titleRow.number, columns.length);
         titleRow.getCell(1).font = { bold: true, size: 13, color: { argb: "FF0A2E2A" } };
         titleRow.getCell(1).fill = {
           type: "pattern",
           pattern: "solid",
           fgColor: { argb: "FFE4F0EE" },
         };
-        // A reliever sheet carries who the engagement covers; the others have nothing
-        // to put in those columns, so they are left off rather than added empty.
-        const relieverColumns = type === "relieverEnd";
-        const headerRow = ws.addRow([
-          "Employee Name",
-          "Position",
-          "Department",
-          "Immediate Supervisor",
-          "Email",
-          ...(relieverColumns
-            ? ["Employee Being Replaced", "Reason for Replacement", "Position Being Replaced"]
-            : []),
-          relieverColumns ? "Reliever Contract End Date" : MILESTONE_LABELS[type],
-          "Notes",
-        ]);
+
+        const headerRow = ws.addRow(columns);
         headerRow.eachCell((cell) => {
           cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
           cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0E5E56" } };
         });
-        sheetRows.forEach((r) => {
-          ws.addRow([
-            r.name,
-            r.position,
-            r.department,
-            r.supervisor,
-            r.email,
-            ...(relieverColumns
-              ? [r.replacedName || "", r.replacedReason || "", r.replacedPosition || ""]
-              : []),
-            formatDate(r.date, "MMMM d, yyyy"),
-            noteFor(r.id, type),
-          ]);
-        });
-        if (type === "sixth") appendNoteReference(ws);
+
+        sheetRows.forEach((r) => ws.addRow(rowFor(r)));
+        ws.addRow([]);
+        const totalRow = ws.addRow([`Total: ${sheetRows.length}`]);
+        totalRow.getCell(1).font = { bold: true };
       }
 
-      function computeRowsFor(type: MilestoneType): FilterRow[] {
-        if (type === "birthday") {
+      function computeRowsFor(kind: MilestoneType): FilterRow[] {
+        if (kind === "birthday") {
           return employees
             .filter((e) => e.birthday)
             .map((e) => {
@@ -1970,7 +2058,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
             .filter((r) => inRange(r.date, startDate, endDate))
             .sort((a, b) => (a.date < b.date ? -1 : 1));
         }
-        if (type === "relieverEnd") {
+        if (kind === "relieverEnd") {
           return employees
             .filter((e) => e.isReliever && e.relieverEndDate && !e.lastDay)
             .map((e) => ({
@@ -1980,14 +2068,20 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
               replacedPosition: e.replacedPosition || "",
             }))
             .filter((r) => inRange(r.date, startDate, endDate))
-            .sort((a, b) => (a.date < b.date ? 1 : -1));
+            .sort((a, b) => (a.date < b.date ? -1 : 1));
         }
-        const monthsMap: Record<MilestoneType, number> = { birthday: 0, relieverEnd: 0, third: 3, sixth: 6, oneYear: 12 };
+        const monthsMap: Record<MilestoneType, number> = {
+          birthday: 0,
+          relieverEnd: 0,
+          third: 3,
+          sixth: 6,
+          oneYear: 12,
+        };
         return employees
           .filter((e) => e.dateHired && !e.lastDay)
           .map((e) => {
             const d = new Date(e.dateHired!);
-            d.setMonth(d.getMonth() + monthsMap[type]);
+            d.setMonth(d.getMonth() + monthsMap[kind]);
             return {
               id: e.id,
               name: e.name,
@@ -2002,11 +2096,27 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
           .sort((a, b) => (a.date < b.date ? -1 : 1));
       }
 
-      buildSheet("Birthdays", "birthday", computeRowsFor("birthday"));
-      buildSheet("Reliever Contract", "relieverEnd", computeRowsFor("relieverEnd"));
-      buildSheet("3rd Month", "third", computeRowsFor("third"));
-      buildSheet("6th Month", "sixth", computeRowsFor("sixth"));
-      buildSheet("1 Year", "oneYear", computeRowsFor("oneYear"));
+      // One sheet per month the range actually covers, in date order. A range wholly
+      // inside one month therefore produces one sheet, not twelve empty ones.
+      const rows = computeRowsFor(type);
+      const months = new Map<string, FilterRow[]>();
+      rows.forEach((r) => {
+        const key = format(new Date(r.date), "yyyy-MM");
+        const list = months.get(key);
+        if (list) list.push(r);
+        else months.set(key, [r]);
+      });
+
+      if (months.size === 0) {
+        // Still give them a workbook rather than a silent no-op, so an empty month reads
+        // as "nobody is due" instead of as a failed download.
+        buildSheet(format(new Date(startDate), "MMMM yyyy"), format(new Date(startDate), "MMMM yyyy"), []);
+      } else {
+        [...months.keys()].sort().forEach((key) => {
+          const label = format(new Date(`${key}-01T00:00:00`), "MMMM yyyy");
+          buildSheet(label, label, months.get(key) || []);
+        });
+      }
 
       const buffer = await wb.xlsx.writeBuffer();
       const blob = new Blob([buffer], {
@@ -2015,12 +2125,12 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${exportFileName()}.xlsx`;
+      a.download = `${MILESTONE_LABELS[type]} - ${exportFileName()}.xlsx`;
       document.body.appendChild(a);
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-      notify(`Exported milestone report to Excel`, "created");
+      notify(`Exported ${MILESTONE_LABELS[type]} to Excel (${months.size || 1} sheet(s))`, "created");
     } finally {
       setExporting(false);
     }
@@ -2114,17 +2224,13 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                 {ddmmyyyy(endDate)} — {spelledOut(endDate)}
               </span>
             </label>
-            <Button variant="ghost" onClick={() => applyPreset("week")}>
-              This Week
-            </Button>
-            <Button variant="ghost" onClick={() => applyPreset("month")}>
-              This Month
-            </Button>
-            <Button variant="ghost" onClick={() => applyPreset("year")}>
-              This Year
-            </Button>
             {isMilestoneView && (
-              <Button onClick={handleExport} disabled={exporting} className="ml-auto">
+              <Button
+                onClick={handleExport}
+                disabled={exporting}
+                className="ml-auto"
+                title={`Exports ${MILESTONE_LABELS[milestoneType]} only, one sheet per month in the range above`}
+              >
                 {exporting ? "Exporting…" : "Export to Excel"}
               </Button>
             )}
@@ -2248,6 +2354,23 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                 </div>
               )}
 
+              {milestoneType === "third" && isMilestoneView && (
+                <div className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-background px-3 py-2">
+                  <span className="text-xs text-ink-muted">
+                    {thirdTemplate
+                      ? `3rd Month Evaluation template: ${thirdTemplate.fileName}`
+                      : "No 3rd Month Evaluation template uploaded yet."}
+                  </span>
+                  <FileButton
+                    accept=".docx"
+                    onFile={uploadThirdTemplate}
+                    title="Upload the blank 3rd Month Probationary Evaluation (Word) — only the NAME: line is filled in"
+                  >
+                    {thirdTemplate ? "Replace template" : "Import template (Word)"}
+                  </FileButton>
+                </div>
+              )}
+
               <p className="mt-4 text-sm font-medium text-ink">Total Employees: {rows.length}</p>
 
               {rows.length === 0 ? (
@@ -2273,6 +2396,9 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                         )}
                         <th className="px-3 py-2">{dateColumnLabel}</th>
                         {isMilestoneView && <th className="px-3 py-2">Notes</th>}
+                        {milestoneType === "third" && isMilestoneView && (
+                          <th className="px-3 py-2">Performance Evaluation</th>
+                        )}
                         {milestoneType === "sixth" && isMilestoneView && (
                           <th className="px-3 py-2">6-Month Salary Review</th>
                         )}
@@ -2311,7 +2437,17 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                                   onChange={(v) => setNoteFor(r.id, "sixth", v)}
                                   options={sixthMonthNoteOptions(noteFor(r.id, "sixth"))}
                                   labels={sixthMonthNoteLabels(noteFor(r.id, "sixth"))}
-                                  tone={sixthMonthNoteTone}
+                                  tone={milestoneNoteTone}
+                                />
+                              ) : milestoneType === "third" ? (
+                                // The same idea one milestone earlier, with the shorter list
+                                // the 3rd-month check-in actually has.
+                                <StatusSelect
+                                  value={noteFor(r.id, "third")}
+                                  onChange={(v) => setNoteFor(r.id, "third", v)}
+                                  options={thirdMonthNoteOptions(noteFor(r.id, "third"))}
+                                  labels={thirdMonthNoteLabels(noteFor(r.id, "third"))}
+                                  tone={milestoneNoteTone}
                                 />
                               ) : (
                                 <Input
@@ -2323,26 +2459,47 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                               )}
                             </td>
                           )}
+                          {milestoneType === "third" && isMilestoneView && (
+                            <td className="px-3 py-2">
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                disabled={!thirdTemplate || thirdBusyId === r.id}
+                                onClick={() => downloadThirdEval(r)}
+                                title={
+                                  thirdTemplate
+                                    ? "Downloads the 3rd Month Evaluation with this employee's name filled in"
+                                    : "Import the blank Word template above first"
+                                }
+                              >
+                                {thirdBusyId === r.id ? "Building…" : "Download"}
+                              </Button>
+                            </td>
+                          )}
                           {milestoneType === "sixth" && isMilestoneView && (
                             <td className="px-3 py-2">
                               <div className="flex flex-col gap-1.5">
+                                {/* Unset by default: an employee nobody has reviewed yet must
+                                    not read as "As Is Salary", which is a decision. */}
                                 <select
                                   value={
-                                    employees.find((e) => e.id === r.id)?.sixthMonthSalaryReview ||
-                                    "asIs"
+                                    employees.find((e) => e.id === r.id)?.sixthMonthSalaryReview || ""
                                   }
                                   onChange={(e) => {
-                                    const review = e.target.value as "asIs" | "withIncrease";
+                                    const review = e.target.value as "" | "asIs" | "withIncrease";
                                     updateEmployee(r.id, {
-                                      sixthMonthSalaryReview: review,
-                                      // Clearing the contract percentage when "As Is" is chosen
-                                      // keeps it from silently computing a raise nobody meant —
-                                      // the letters and the Compensation panel both read it.
-                                      ...(review === "asIs" ? { regularizationIncreasePercent: "" } : {}),
+                                      sixthMonthSalaryReview: review || undefined,
+                                      // Clearing the contract percentage for anything but a raise
+                                      // keeps it from silently computing one nobody meant — the
+                                      // letters and the Compensation panel both read it.
+                                      ...(review === "withIncrease"
+                                        ? {}
+                                        : { regularizationIncreasePercent: "" }),
                                     });
                                   }}
                                   className="h-9 min-w-[130px] rounded-lg border border-border bg-background px-2 text-sm text-ink"
                                 >
+                                  <option value="">{NOT_SET_LABEL}</option>
                                   <option value="asIs">As Is Salary</option>
                                   <option value="withIncrease">With Increase</option>
                                 </select>

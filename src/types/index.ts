@@ -307,6 +307,15 @@ export type EventReportRow = {
   time: string;
   endTime?: string;
   location: string;
+  /** Unset until someone says how the event went; never assumed either way. */
+  status?: EventStatus;
+};
+
+export type EventStatus = "done" | "cancelled";
+
+export const EVENT_STATUS_LABELS: Record<EventStatus, string> = {
+  done: "Done",
+  cancelled: "Cancelled",
 };
 
 export type PlanReportRow = {

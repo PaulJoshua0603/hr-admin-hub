@@ -4,10 +4,10 @@ import { useState } from "react";
 import { format } from "date-fns";
 import { useSupabaseStore, getStoreSnapshot } from "@/lib/useSupabaseStore";
 import { Button, Card, Input } from "@/components/ui";
-import { formatDate, formatTime24 } from "@/lib/dates";
+import { formatDate, formatTime12 } from "@/lib/dates";
 import { inRange, rangeFor, type RangePreset } from "@/lib/dateRanges";
 import { useNotifications } from "@/lib/notificationContext";
-import { SIXTH_MONTH_NOTE_REFERENCE } from "@/lib/milestoneNotes";
+import { NOT_SET_LABEL } from "@/lib/milestoneNotes";
 import { sixthMonthRows } from "./SixthMonthReport";
 import type {
   ER2ReportRow,
@@ -17,10 +17,10 @@ import type {
   CustomReportTable,
   COERequest,
   Employee,
-  MilestoneNote,
   ER2Form,
   ER2Template,
 } from "@/types";
+import { EVENT_STATUS_LABELS } from "@/types";
 
 type Coverage = RangePreset;
 
@@ -50,7 +50,6 @@ export function ReportExportSection() {
   const { items: planRows } = useSupabaseStore<PlanReportRow>("hr_report_plans", []);
   const { items: customTables } = useSupabaseStore<CustomReportTable>("hr_report_custom_tables", []);
   const { items: employees } = useSupabaseStore<Employee>("hr_employees", []);
-  const { items: milestoneNotes } = useSupabaseStore<MilestoneNote>("hr_milestone_notes", []);
   const { items: er2Forms } = useSupabaseStore<ER2Form>("hr_er2_forms", []);
   // Only its file name is ever read here, and only once someone actually exports — not
   // worth pulling the template's base64 body down on every visit to Reports for that.
@@ -285,63 +284,53 @@ export function ReportExportSection() {
       if (sixthMonth.length > 0) {
         const s = addSheet(
           "Employee 6th-Month",
-          [26, 24, 20, 26, 22, 18, 18, 24],
+          [26, 24, 20, 18, 24, 18],
           "Employee 6th-Month Report",
           [
             "Employee Name",
             "Position",
             "Department",
-            "Email",
-            "Immediate Supervisor",
-            "Date Hired",
-            "6th Month",
-            "Notes",
+            "Salary Status",
+            "Salary Increase Percentage",
+            "6th Month Date",
           ]
         );
-        sixthMonth.forEach((r) =>
+        sixthMonth.forEach((r) => {
+          const employee = employees.find((e) => e.id === r.id);
+          const review = employee?.sixthMonthSalaryReview;
+          const percent = (employee?.regularizationIncreasePercent || "").trim();
           s.addRow([
             r.name,
             r.position,
             r.department,
-            r.email,
-            r.supervisor,
-            formatDate(r.dateHired, "MMMM d, yyyy"),
+            review === "withIncrease"
+              ? "With Increase"
+              : review === "asIs"
+                ? "As Is Salary"
+                : NOT_SET_LABEL,
+            review === "withIncrease" ? (percent ? `${percent}%` : "") : review === "asIs" ? "N/A" : "",
             formatDate(r.sixthMonth, "MMMM d, yyyy"),
-            milestoneNotes.find((m) => m.employeeId === r.id && m.milestoneType === "sixth")?.note || "",
-          ])
-        );
+          ]);
+        });
         addTotal(s, sixthMonth.length, "Employee");
-        // What each Notes status means, for whoever opens the file.
-        s.addRow([]);
-        const caption = s.addRow(["Notes — dropdown options and meanings"]);
-        caption.getCell(1).font = { bold: true, size: 12 };
-        const refHeader = s.addRow(["Dropdown Option", "Meaning"]);
-        refHeader.eachCell((c, col) => {
-          if (col > 2) return;
-          c.font = { bold: true, color: { argb: "FFFFFFFF" } };
-          c.fill = { ...HEADER_FILL };
-        });
-        SIXTH_MONTH_NOTE_REFERENCE.forEach(([option, meaning]) => {
-          const row = s.addRow([option, meaning]);
-          row.getCell(1).font = { bold: true };
-          row.getCell(2).alignment = { wrapText: true };
-        });
       }
       if (events.length > 0) {
-        const s = addSheet("Events Attended", [28, 18, 14, 14, 26], "Events Attended Report", [
+        const s = addSheet("Events Attended", [28, 18, 14, 14, 26, 14], "Events Attended Report", [
           "Event Name",
           "Date",
           "Start Time",
           "End Time",
           "Location",
+          "Status",
         ]);
         events.forEach((r) =>
           s.addRow([
             r.eventName,
             formatDate(r.date, "MMMM d, yyyy"),
-            formatTime24(r.time),
-            formatTime24(r.endTime || ""),
+            formatTime12(r.time),
+            formatTime12(r.endTime || ""),
             r.location,
+            r.status ? EVENT_STATUS_LABELS[r.status] : "",
           ])
         );
         addTotal(s, events.length, "Event");
