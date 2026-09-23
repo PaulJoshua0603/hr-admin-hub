@@ -617,6 +617,33 @@ export default function EmployeeDetailPage({
 
       <Card className="mb-6">
         <h2 className="font-display text-lg text-ink">Employee details</h2>
+        {/* The full middle name lives here, not in the display name — the ER2 form prints
+            "BAYANI, HAZEL ENTERIA" from these three, and can only print an initial for a
+            record that has none of them. */}
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <FieldGroup label="Last Name">
+            <Input
+              value={employee.lastName || ""}
+              disabled={!isEditing}
+              onChange={(e) => update(employee.id, { lastName: e.target.value })}
+            />
+          </FieldGroup>
+          <FieldGroup label="First Name">
+            <Input
+              value={employee.firstName || ""}
+              disabled={!isEditing}
+              onChange={(e) => update(employee.id, { firstName: e.target.value })}
+            />
+          </FieldGroup>
+          <FieldGroup label="Middle Name (full)">
+            <Input
+              value={employee.middleName || ""}
+              placeholder="e.g. Enteria"
+              disabled={!isEditing}
+              onChange={(e) => update(employee.id, { middleName: e.target.value })}
+            />
+          </FieldGroup>
+        </div>
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <FieldGroup label="Birthday">
             <div className="flex w-full flex-col gap-1">

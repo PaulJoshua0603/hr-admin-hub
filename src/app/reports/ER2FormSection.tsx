@@ -21,7 +21,7 @@ import {
   listedCount,
   pageCount,
 } from "@/lib/er2Pdf";
-import { er2EntryFromEmployee, findEmployeeByName } from "@/lib/er2Fields";
+import { er2EntryFromEmployee, findEmployeeByName, formatEr2Name } from "@/lib/er2Fields";
 import { EmployeeNameInput } from "@/components/EmployeeNameInput";
 import { useNotifications } from "@/lib/notificationContext";
 import type { ER2Entry, ER2Form, ER2SingleField, ER2Template, Employee } from "@/types";
@@ -375,6 +375,22 @@ function ER2FormEditor({
     });
   }
 
+  /**
+   * Saving a line settles its name: whatever was typed ("Hazel E. Bayani", "BAYANI, HAZEL
+   * E.") becomes the full name on record, "BAYANI, HAZEL ENTERIA". It happens here rather
+   * than on each keystroke so the text never changes under the cursor. A record with no
+   * full middle name on file is left as typed — a middle name added by hand is kept.
+   */
+  function saveEntryEdit(id: string) {
+    const entry = draft.entries.find((e) => e.id === id);
+    const emp = entry ? findEmployeeByName(employees, entry.name) : null;
+    const middle = (emp?.middleName || "").replace(/[^\p{L}]/gu, "");
+    if (entry && emp && emp.lastName && emp.firstName && middle.length > 1) {
+      setEntry(id, { name: formatEr2Name(emp), employeeId: emp.id });
+    }
+    setEditingEntryId(null);
+  }
+
   function startEntryEdit(entry: ER2Entry) {
     setEntryBeforeEdit({ ...entry });
     setEditingEntryId(entry.id);
@@ -573,7 +589,7 @@ function ER2FormEditor({
                         {editing ? (
                           <div className="flex gap-3">
                             <button
-                              onClick={() => setEditingEntryId(null)}
+                              onClick={() => saveEntryEdit(entry.id)}
                               className="text-xs text-accent hover:underline"
                             >
                               Save
