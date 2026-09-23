@@ -12,6 +12,19 @@ import { employeeNameParts } from "@/lib/employeeNamePdf";
  *   Date of employment  SEPTEMBER 01, 2026   (hired / onboarding date)
  */
 
+/**
+ * Formats a PhilHealth number while it is being typed: "17-13245678-0" style, dashes put
+ * in automatically after the 2nd and 11th digits (XX-XXXXXXXXX-X). Anything but digits is
+ * dropped and it stops at 12 digits, so a pasted number with spaces or its own dashes
+ * comes out the same as one typed by hand.
+ */
+export function formatPhilHealthInput(raw: string): string {
+  const digits = (raw || "").replace(/\D/g, "").slice(0, 12);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 11) return `${digits.slice(0, 2)}-${digits.slice(2)}`;
+  return `${digits.slice(0, 2)}-${digits.slice(2, 11)}-${digits.slice(11)}`;
+}
+
 /** 12 digits become XX-XXXXXXXXX-X; anything else is passed through as typed. */
 export function formatPhilHealthNo(raw?: string): string {
   const digits = (raw || "").replace(/\D/g, "");

@@ -7,6 +7,7 @@ import { v4 as uuid } from "uuid";
 import { useSupabaseStore } from "@/lib/useSupabaseStore";
 import { buildRelieverContractPdf, relieverContractFileName } from "@/lib/relieverContractPdf";
 import { buildEmployeeNamePdf, employeeNameFileName } from "@/lib/employeeNamePdf";
+import { formatPhilHealthInput } from "@/lib/er2Fields";
 import { useNotifications } from "@/lib/notificationContext";
 import { addDaysISO, addMonthsISO, daysSince, formatDate, isOverdue, nextMondayISO, todayISO } from "@/lib/dates";
 import {
@@ -738,8 +739,12 @@ export default function EmployeeDetailPage({
           <FieldGroup label="PhilHealth No.">
             <Input
               value={employee.philhealthNo || ""}
+              inputMode="numeric"
+              placeholder="17-132456780-0"
               disabled={!isEditing}
-              onChange={(e) => update(employee.id, { philhealthNo: e.target.value })}
+              onChange={(e) =>
+                update(employee.id, { philhealthNo: formatPhilHealthInput(e.target.value) })
+              }
             />
           </FieldGroup>
           <FieldGroup label="ID Number (Company ID)">

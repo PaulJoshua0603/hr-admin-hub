@@ -26,6 +26,7 @@ import {
   completedMiddleName,
   er2EntryFromEmployee,
   findEmployeeByName,
+  formatPhilHealthInput,
 } from "@/lib/er2Fields";
 import { employeeNameParts } from "@/lib/employeeNamePdf";
 import { EmployeeNameInput } from "@/components/EmployeeNameInput";
@@ -619,8 +620,15 @@ function ER2FormEditor({
                           <td key={col} className="px-2 py-1.5">
                             <Input
                               value={entry[col]}
+                              inputMode={col === "philhealthNo" ? "numeric" : undefined}
+                              placeholder={col === "philhealthNo" ? "17-132456780-0" : undefined}
                               onChange={(e) =>
-                                setEntry(entry.id, { [col]: e.target.value.toUpperCase() })
+                                setEntry(entry.id, {
+                                  [col]:
+                                    col === "philhealthNo"
+                                      ? formatPhilHealthInput(e.target.value)
+                                      : e.target.value.toUpperCase(),
+                                })
                               }
                               className="min-w-[120px]"
                             />
