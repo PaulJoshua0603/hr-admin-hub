@@ -95,12 +95,14 @@ export function CollapsibleSection({
       <button
         type="button"
         aria-expanded={open}
-        onClick={() =>
-          setOpen((o) => {
-            onOpenChange?.(!o);
-            return !o;
-          })
-        }
+        onClick={() => {
+          // Worked out here and passed to both, rather than telling the parent from inside
+          // the state updater — React runs updaters during render, where a parent's
+          // setState is not allowed.
+          const next = !open;
+          setOpen(next);
+          onOpenChange?.(next);
+        }}
         className={`flex w-full items-center gap-3 text-left ${FOCUS_RING} rounded-lg`}
       >
         <span
