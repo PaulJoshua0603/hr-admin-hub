@@ -1,5 +1,6 @@
 import { formatDate } from "@/lib/dates";
 import type { Employee, ER2Entry } from "@/types";
+import { employeeNameParts } from "@/lib/employeeNamePdf";
 
 /**
  * How each ER2 value is written on the PhilHealth sheet. Everything goes on in
@@ -122,4 +123,59 @@ export function findEmployeeByName(employees: Employee[], typed: string): Employ
     return tokens.length > 0 && tokens.every((t) => typedTokens.has(t));
   });
   return partial.length === 1 ? partial[0] : null;
+}
+
+const hasFullMiddleName = (e: Employee) =>
+  !!(e.lastName && e.firstName && (e.middleName || "").replace(/[^\p{L}]/gu, "").length > 1);
+
+/**
+ * The full middle name a typed name supplies for a record that has only the initial.
+ *
+ * "MATIBAG, LUIS FERNANDO GUTIERREZ" completes "Luis Fernando G. Matibag" — same surname,
+ * same given names, and one more word starting with the initial on file. It is matched that
+ * strictly on purpose: this is what gets written back to the employee record, so a name
+ * that merely looks similar must not be taken as the real one.
+ */
+export function completedMiddleName(e: Employee, typed: string): string | null {
+  const { surname, first, middleInitial } = employeeNameParts(e);
+  if (!surname || !first || !middleInitial) return null;
+  const norm = (s: string) =>
+    s.replace(/[^\p{L}\s,]/gu, "").toUpperCase().replace(/\s+/g, " ").trim();
+  const text = norm(typed);
+  const last = norm(surname);
+  let given: string;
+  if (text.includes(",")) {
+    const [s, ...rest] = text.split(",");
+    if (s.trim() !== last) return null;
+    given = rest.join(" ").trim();
+  } else {
+    if (!text.endsWith(` ${last}`)) return null;
+    given = text.slice(0, -last.length).trim();
+  }
+  const firstNorm = norm(first);
+  if (!given.startsWith(`${firstNorm} `)) return null;
+  const middle = given.slice(firstNorm.length).trim();
+  if (middle.includes(" ") || middle.length < 2) return null;
+  if (middle[0] !== middleInitial.charAt(0).toUpperCase()) return null;
+  return middle.charAt(0) + middle.slice(1).toLowerCase();
+}
+
+/**
+ * The most complete ER2 name known for an employee: the record's own, when it carries the
+ * full middle name, or else one typed on an earlier ER2 form that completes it. Null when
+ * neither exists — nothing better than the initial is known, so the caller keeps what the
+ * user typed rather than downgrading it.
+ */
+export function bestEr2Name(
+  e: Employee,
+  pastNames: string[]
+): { name: string; learnedMiddle?: string } | null {
+  if (hasFullMiddleName(e)) return { name: formatEr2Name(e) };
+  for (const past of pastNames) {
+    const middle = completedMiddleName(e, past);
+    if (!middle) continue;
+    const { surname, first } = employeeNameParts(e);
+    return { name: `${surname}, ${first} ${middle}`.toUpperCase(), learnedMiddle: middle };
+  }
+  return null;
 }

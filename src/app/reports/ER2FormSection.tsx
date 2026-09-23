@@ -21,7 +21,13 @@ import {
   listedCount,
   pageCount,
 } from "@/lib/er2Pdf";
-import { er2EntryFromEmployee, findEmployeeByName, formatEr2Name } from "@/lib/er2Fields";
+import {
+  bestEr2Name,
+  completedMiddleName,
+  er2EntryFromEmployee,
+  findEmployeeByName,
+} from "@/lib/er2Fields";
+import { employeeNameParts } from "@/lib/employeeNamePdf";
 import { EmployeeNameInput } from "@/components/EmployeeNameInput";
 import { useNotifications } from "@/lib/notificationContext";
 import type { ER2Entry, ER2Form, ER2SingleField, ER2Template, Employee } from "@/types";
@@ -54,8 +60,18 @@ export function ER2FormSection() {
   );
   const { items: forms, hydrated, add: addForm, update: updateForm, remove: removeForm } =
     useSupabaseStore<ER2Form>(FORMS_KEY, []);
-  const { items: employees } = useSupabaseStore<Employee>("hr_employees", []);
+  const { items: employees, update: updateEmployee } = useSupabaseStore<Employee>("hr_employees", []);
   const { notify } = useNotifications();
+
+  // Every name ever saved on an ER2 form. A full middle name typed there once is how the
+  // system learns it for a record that only has the initial.
+  const pastNames = forms.flatMap((f) => f.entries.map((e) => e.name));
+
+  /** Writes a middle name learned from an ER2 line back onto the employee record. */
+  function learnMiddleName(emp: Employee, middle: string) {
+    const { surname, first } = employeeNameParts(emp);
+    updateEmployee(emp.id, { lastName: surname, firstName: first, middleName: middle });
+  }
 
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -237,6 +253,8 @@ export function ER2FormSection() {
           form={openForm}
           template={template}
           employees={employees}
+          pastNames={pastNames}
+          onLearnMiddleName={learnMiddleName}
           onChange={(patch) => updateForm(openForm.id, { ...patch, updatedAt: todayISO() })}
           notify={notify}
         />
@@ -274,12 +292,16 @@ function ER2FormEditor({
   form,
   template,
   employees,
+  pastNames,
+  onLearnMiddleName,
   onChange,
   notify,
 }: {
   form: ER2Form;
   template: ER2Template;
   employees: Employee[];
+  pastNames: string[];
+  onLearnMiddleName: (emp: Employee, middle: string) => void;
   onChange: (patch: Partial<ER2Form>) => void;
   notify: (message: string, kind?: "created" | "updated" | "deleted" | "warn") => void;
 }) {
@@ -342,10 +364,12 @@ function ER2FormEditor({
   /** Copies an employee record onto a line, every field already formatted. */
   function applyEmployee(id: string, emp: Employee) {
     const filled = er2EntryFromEmployee(emp, id);
+    const best = bestEr2Name(emp, pastNames);
+    if (best?.learnedMiddle) onLearnMiddleName(emp, best.learnedMiddle);
     setEntry(id, {
       employeeId: filled.employeeId,
       philhealthNo: filled.philhealthNo,
-      name: filled.name,
+      name: best?.name ?? filled.name,
       position: filled.position,
       salary: filled.salary,
       dateOfEmployment: filled.dateOfEmployment,
@@ -376,17 +400,35 @@ function ER2FormEditor({
   }
 
   /**
-   * Saving a line settles its name: whatever was typed ("Hazel E. Bayani", "BAYANI, HAZEL
-   * E.") becomes the full name on record, "BAYANI, HAZEL ENTERIA". It happens here rather
-   * than on each keystroke so the text never changes under the cursor. A record with no
-   * full middle name on file is left as typed — a middle name added by hand is kept.
+   * Saving a line settles its name to the fullest one known: "Hazel E. Bayani" or
+   * "BAYANI, HAZEL E." becomes "BAYANI, HAZEL ENTERIA". Done on save, not per keystroke,
+   * so the text never changes under the cursor.
+   *
+   * Where the record only has the initial, a full middle name typed here is taken as the
+   * real one and written back to the employee — so it prints in full on every form after
+   * this, not only this one. A name the system knows nothing better about is left exactly
+   * as typed.
    */
   function saveEntryEdit(id: string) {
     const entry = draft.entries.find((e) => e.id === id);
     const emp = entry ? findEmployeeByName(employees, entry.name) : null;
-    const middle = (emp?.middleName || "").replace(/[^\p{L}]/gu, "");
-    if (entry && emp && emp.lastName && emp.firstName && middle.length > 1) {
-      setEntry(id, { name: formatEr2Name(emp), employeeId: emp.id });
+    if (entry && emp) {
+      const typedMiddle = completedMiddleName(emp, entry.name);
+      const recordHasFullMiddle = (emp.middleName || "").replace(/[^\p{L}]/gu, "").length > 1;
+      if (typedMiddle && !recordHasFullMiddle) {
+        onLearnMiddleName(emp, typedMiddle);
+        const { surname, first } = employeeNameParts(emp);
+        setEntry(id, {
+          name: `${surname}, ${first} ${typedMiddle}`.toUpperCase(),
+          employeeId: emp.id,
+        });
+      } else {
+        const best = bestEr2Name(emp, pastNames);
+        if (best) {
+          if (best.learnedMiddle) onLearnMiddleName(emp, best.learnedMiddle);
+          setEntry(id, { name: best.name, employeeId: emp.id });
+        }
+      }
     }
     setEditingEntryId(null);
   }
