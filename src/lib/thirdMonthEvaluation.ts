@@ -44,7 +44,9 @@ function nameRun(text: string): string {
 
 /** The words a paragraph shows, with the markup between them stripped out. */
 function paragraphText(paragraph: string): string {
-  return [...paragraph.matchAll(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g)]
+  // <w:t> or <w:t xml:space=…> only — the looser <w:t[^>]*> also takes <w:tab/> and the
+  // <w:tabs> in paragraph properties, and reads markup as if it were words.
+  return [...paragraph.matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)]
     .map((m) => m[1])
     .join("")
     .replace(/&amp;/g, "&")

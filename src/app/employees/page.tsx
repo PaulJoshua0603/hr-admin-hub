@@ -49,10 +49,9 @@ import {
 } from "@/types";
 import { useNotifications } from "@/lib/notificationContext";
 import {
-  buildPerformanceEvaluation,
-  downloadPdfBytes,
-  performanceEvaluationFileName,
-} from "@/lib/performanceEval";
+  buildPerformanceEvaluationDocx,
+  performanceEvaluationDocxFileName,
+} from "@/lib/performanceEvalDocx";
 import {
   countableEmployees,
   groupEmployees,
@@ -1580,7 +1579,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
     dataUrl: string;
     fileName: string;
     uploadedAt: string;
-  }>("hr_perf_eval_template", [], {
+  }>("hr_perf_eval_docx_template", [], {
     autoLoad: category === "milestones" && milestoneType === "sixth",
   });
   const perfTemplate = perfTemplates[0];
@@ -1588,8 +1587,13 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
   const [thirdBusyId, setThirdBusyId] = useState<string | null>(null);
 
   async function uploadPerfTemplate(file: File) {
+    // A Word form, because the filled evaluation goes out as Word for people to edit.
+    if (!/.docx$/i.test(file.name)) {
+      notify("The Performance Evaluation template needs to be a Word (.docx) file.", "warn");
+      return;
+    }
     if (file.size > 8 * 1024 * 1024) {
-      notify("That file is over 8MB — save a lighter PDF and try again.", "warn");
+      notify("That file is over 8MB — save a lighter copy and try again.", "warn");
       return;
     }
     const dataUrl = await new Promise<string>((resolve, reject) => {
@@ -1675,14 +1679,14 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
   /** Fills the template for one employee and downloads it under their name. */
   async function downloadPerfEval(row: FilterRow) {
     if (!perfTemplate) {
-      notify("Upload the blank Performance Evaluation PDF first.", "warn");
+      notify("Upload the blank Performance Evaluation (Word) first.", "warn");
       return;
     }
     const employee = employees.find((e) => e.id === row.id);
     if (!employee) return;
     setPerfBusyId(row.id);
     try {
-      const result = await buildPerformanceEvaluation(perfTemplate.dataUrl, {
+      const result = await buildPerformanceEvaluationDocx(perfTemplate.dataUrl, {
         fullName: employee.name,
         department: employee.department || "",
         position: employee.position || "",
@@ -1690,7 +1694,14 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
         // The "To" of the period covered is the 6th-month milestone shown in this table.
         sixthMonth: formatDate(row.date, "MMMM d, yyyy"),
       });
-      downloadPdfBytes(result.bytes, performanceEvaluationFileName(employee.name));
+      const url = URL.createObjectURL(result.blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = performanceEvaluationDocxFileName(employee.name);
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
       if (result.missing.length > 0) {
         notify(
           `Downloaded, but these fields were not found in the template: ${result.missing.join(", ")}. Check it is the blank form.`,
@@ -2345,11 +2356,11 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                       : "No Performance Evaluation template uploaded yet."}
                   </span>
                   <FileButton
-                    accept=".pdf"
+                    accept=".docx"
                     onFile={uploadPerfTemplate}
-                    title="Upload the blank Performance Evaluation PDF — only the highlighted fields are replaced"
+                    title="Upload the blank Performance Evaluation (Word) — only the header details are filled in"
                   >
-                    {perfTemplate ? "Replace template" : "Import template (PDF)"}
+                    {perfTemplate ? "Replace template" : "Import template (Word)"}
                   </FileButton>
                 </div>
               )}
