@@ -43,8 +43,6 @@ import {
   type ER2ReportRow,
   type EventReportRow,
   type MilestoneNote,
-  type PlanReportRow,
-  type RegularizationReportRow,
   withNotesTaskListAdditions,
 } from "@/types";
 import { useNotifications } from "@/lib/notificationContext";
@@ -2721,9 +2719,7 @@ function CentralizedCOETracker({ employees }: { employees: Employee[] }) {
   );
   const { update: updateEmployee } = useSupabaseStore<Employee>("hr_employees", []);
   const { items: er2Rows } = useSupabaseStore<ER2ReportRow>("hr_report_er2", []);
-  const { items: regRows } = useSupabaseStore<RegularizationReportRow>("hr_report_regularization", []);
   const { items: eventRows } = useSupabaseStore<EventReportRow>("hr_report_events", []);
-  const { items: planRows } = useSupabaseStore<PlanReportRow>("hr_report_plans", []);
   const { items: customTables } = useSupabaseStore<CustomReportTable>("hr_report_custom_tables", []);
   const [expanded, setExpanded] = useState(false);
   const today = new Date();
@@ -2891,26 +2887,6 @@ function CentralizedCOETracker({ employees }: { employees: Employee[] }) {
             s.addRow([r.employeeName, r.position, r.department, formatDate(r.dateCreated, "MMMM d, yyyy")])
           );
         }
-        if (regRows.length > 0) {
-          const s = wbInner.addWorksheet("Confirmation of Regularization");
-          s.columns = [{ width: 26 }, { width: 24 }, { width: 20 }, { width: 20 }, { width: 18 }];
-          const t = s.addRow(["Confirmation of Regularization Report"]);
-          t.getCell(1).font = { bold: true, size: 12 };
-          const h = s.addRow(["Employee Name", "Position", "Department", "Date Created", "Date of Regularization"]);
-          h.eachCell((c) => {
-            c.font = { bold: true, color: { argb: "FFFFFFFF" } };
-            c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0E5E56" } };
-          });
-          regRows.forEach((r) =>
-            s.addRow([
-              r.employeeName,
-              r.position,
-              r.department,
-              formatDate(r.dateCreated, "MMMM d, yyyy"),
-              formatDate(r.dateOfRegularization, "MMMM d, yyyy"),
-            ])
-          );
-        }
         if (eventRows.length > 0) {
           const s = wbInner.addWorksheet("Events Attended");
           s.columns = [{ width: 28 }, { width: 18 }, { width: 14 }, { width: 14 }, { width: 26 }];
@@ -2929,20 +2905,6 @@ function CentralizedCOETracker({ employees }: { employees: Employee[] }) {
               formatTime12(r.endTime || ""),
               r.location,
             ])
-          );
-        }
-        if (planRows.length > 0) {
-          const s = wbInner.addWorksheet("Plan for Next Week");
-          s.columns = [{ width: 34 }, { width: 18 }, { width: 18 }];
-          const t = s.addRow(["Plan for Next Week"]);
-          t.getCell(1).font = { bold: true, size: 12 };
-          const h = s.addRow(["Plan for Next Week", "Start Date", "End Date"]);
-          h.eachCell((c) => {
-            c.font = { bold: true, color: { argb: "FFFFFFFF" } };
-            c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0E5E56" } };
-          });
-          planRows.forEach((r) =>
-            s.addRow([r.plan, formatDate(r.startDate, "MMMM d, yyyy"), formatDate(r.endDate, "MMMM d, yyyy")])
           );
         }
         customTables.forEach((ct) => {

@@ -5,15 +5,13 @@ import { format } from "date-fns";
 import { useSupabaseStore, getStoreSnapshot } from "@/lib/useSupabaseStore";
 import { Button, Card, Input } from "@/components/ui";
 import { formatDate, formatTime12 } from "@/lib/dates";
-import { inRange, rangeFor, type RangePreset } from "@/lib/dateRanges";
+import { inRange, rangeFor } from "@/lib/dateRanges";
 import { useNotifications } from "@/lib/notificationContext";
 import { NOT_SET_LABEL } from "@/lib/milestoneNotes";
 import { sixthMonthRows } from "./SixthMonthReport";
 import type {
   ER2ReportRow,
-  RegularizationReportRow,
   EventReportRow,
-  PlanReportRow,
   CustomReportTable,
   COERequest,
   Employee,
@@ -21,16 +19,6 @@ import type {
   ER2Template,
 } from "@/types";
 import { EVENT_STATUS_LABELS } from "@/types";
-
-type Coverage = RangePreset;
-
-const COVERAGE_OPTIONS: { id: Coverage; label: string }[] = [
-  { id: "day", label: "Day" },
-  { id: "week", label: "Week" },
-  { id: "month", label: "Month" },
-  { id: "year", label: "Year" },
-  { id: "custom", label: "Custom Date Range" },
-];
 
 const HEADER_FILL = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0E5E56" } } as const;
 
@@ -45,9 +33,7 @@ export function ReportExportSection() {
 
   const { items: coeRequests } = useSupabaseStore<COERequest>("hr_coe_requests", []);
   const { items: er2Rows } = useSupabaseStore<ER2ReportRow>("hr_report_er2", []);
-  const { items: regRows } = useSupabaseStore<RegularizationReportRow>("hr_report_regularization", []);
   const { items: eventRows } = useSupabaseStore<EventReportRow>("hr_report_events", []);
-  const { items: planRows } = useSupabaseStore<PlanReportRow>("hr_report_plans", []);
   const { items: customTables } = useSupabaseStore<CustomReportTable>("hr_report_custom_tables", []);
   const { items: employees } = useSupabaseStore<Employee>("hr_employees", []);
   const { items: er2Forms } = useSupabaseStore<ER2Form>("hr_er2_forms", []);
@@ -58,18 +44,9 @@ export function ReportExportSection() {
   });
   const { notify } = useNotifications();
 
-  const [coverage, setCoverage] = useState<Coverage>("month");
   const [startDate, setStartDate] = useState(monthRange.start);
   const [endDate, setEndDate] = useState(monthRange.end);
   const [exporting, setExporting] = useState(false);
-
-  function applyCoverage(next: Coverage) {
-    setCoverage(next);
-    if (next === "custom") return;
-    const r = rangeFor(next, new Date());
-    setStartDate(r.start);
-    setEndDate(r.end);
-  }
 
   const coeWithPurpose = coeRequests.filter(
     (r) => r.category !== "endOfEmployment" && inRange(r.dateRequested, startDate, endDate)
@@ -78,9 +55,7 @@ export function ReportExportSection() {
     (r) => r.category === "endOfEmployment" && inRange(r.dateRequested, startDate, endDate)
   );
   const er2 = er2Rows.filter((r) => inRange(r.dateCreated, startDate, endDate));
-  const reg = regRows.filter((r) => inRange(r.dateOfRegularization, startDate, endDate));
   const events = eventRows.filter((r) => inRange(r.date, startDate, endDate));
-  const plans = planRows.filter((r) => inRange(r.startDate, startDate, endDate));
   const sixthMonth = sixthMonthRows(employees, startDate, endDate);
   // An ER2 form counts as in-coverage when its own coverage overlaps the export range.
   const matchingEr2Forms = er2Forms.filter(
@@ -92,17 +67,20 @@ export function ReportExportSection() {
     coeWithPurpose.length +
     coeResigned.length +
     er2.length +
-    reg.length +
     sixthMonth.length +
-    events.length +
-    plans.length;
+    events.length;
 
   function coverageLabel(): string {
     const s = new Date(startDate);
     const e = new Date(endDate);
-    if (coverage === "day") return format(s, "MMMM d, yyyy");
-    if (coverage === "year") return `${s.getFullYear()}`;
-    if (coverage === "month" && s.getMonth() === e.getMonth() && s.getFullYear() === e.getFullYear()) {
+    // A whole calendar month reads as "September 2026", a single day as one date.
+    if (startDate === endDate) return format(s, "MMMM d, yyyy");
+    const monthStart = new Date(s.getFullYear(), s.getMonth(), 1);
+    const monthEnd = new Date(s.getFullYear(), s.getMonth() + 1, 0);
+    if (
+      s.getTime() === monthStart.getTime() &&
+      format(e, "yyyy-MM-dd") === format(monthEnd, "yyyy-MM-dd")
+    ) {
       return format(s, "MMMM yyyy");
     }
     const sameMonth = s.getMonth() === e.getMonth() && s.getFullYear() === e.getFullYear();
@@ -172,11 +150,9 @@ export function ReportExportSection() {
         ["COE with Purpose", coeWithPurpose.length],
         ["COE for Resigned Employees", coeResigned.length],
         ["ER2 Form for PhilHealth", er2.length],
-        ["Confirmation of Regularization", reg.length],
         ["Employee 6th-Month", sixthMonth.length],
         ["ER2 forms in coverage", matchingEr2Forms.length],
         ["Events Attended", events.length],
-        ["Plan for Next Week", plans.length],
         ["Custom table rows (all dates)", customRowCount],
       ].forEach(([label, count]) => summary.addRow([label, count]));
 
@@ -216,24 +192,6 @@ export function ReportExportSection() {
           s.addRow([r.employeeName, r.position, r.department, formatDate(r.dateCreated, "MMMM d, yyyy")])
         );
         addTotal(s, er2.length, "Employee");
-      }
-      if (reg.length > 0) {
-        const s = addSheet(
-          "Confirmation of Regularization",
-          [26, 24, 20, 22, 18],
-          "Confirmation of Regularization Report",
-          ["Employee Name", "Position", "Department", "Date Created", "Date of Regularization"]
-        );
-        reg.forEach((r) =>
-          s.addRow([
-            r.employeeName,
-            r.position,
-            r.department,
-            formatDate(r.dateCreated, "MMMM d, yyyy"),
-            formatDate(r.dateOfRegularization, "MMMM d, yyyy"),
-          ])
-        );
-        addTotal(s, reg.length, "Employee");
       }
       if (matchingEr2Forms.length > 0) {
         const s = wb.addWorksheet(uniqueSheetName("ER2 Form (PhilHealth)"));
@@ -335,17 +293,6 @@ export function ReportExportSection() {
         );
         addTotal(s, events.length, "Event");
       }
-      if (plans.length > 0) {
-        const s = addSheet("Plan for Next Week", [34, 18, 18], "Plan for Next Week", [
-          "Plan for Next Week",
-          "Start Date",
-          "End Date",
-        ]);
-        plans.forEach((r) =>
-          s.addRow([r.plan, formatDate(r.startDate, "MMMM d, yyyy"), formatDate(r.endDate, "MMMM d, yyyy")])
-        );
-        addTotal(s, plans.length, "Plan");
-      }
       customTables.forEach((ct) => {
         if (ct.rows.length === 0) return;
         const s = addSheet(
@@ -380,21 +327,9 @@ export function ReportExportSection() {
     <Card>
       <h2 className="font-display text-lg text-ink">Export to Excel</h2>
       <p className="mt-1 text-xs text-ink-muted">
-        Pick the date coverage, then export every report table above — both COE tables included — into one
+        Pick a start and end date, then export every report table above — both COE tables included — into one
         Excel file.
       </p>
-
-      <div className="mt-3 flex flex-wrap gap-2">
-        {COVERAGE_OPTIONS.map((opt) => (
-          <Button
-            key={opt.id}
-            variant={coverage === opt.id ? "primary" : "ghost"}
-            onClick={() => applyCoverage(opt.id)}
-          >
-            {opt.label}
-          </Button>
-        ))}
-      </div>
 
       <div className="mt-3 flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-1 text-xs text-ink-muted">
@@ -402,10 +337,7 @@ export function ReportExportSection() {
           <Input
             type="date"
             value={startDate}
-            onChange={(e) => {
-              setCoverage("custom");
-              setStartDate(e.target.value);
-            }}
+            onChange={(e) => setStartDate(e.target.value)}
           />
         </label>
         <label className="flex flex-col gap-1 text-xs text-ink-muted">
@@ -413,10 +345,7 @@ export function ReportExportSection() {
           <Input
             type="date"
             value={endDate}
-            onChange={(e) => {
-              setCoverage("custom");
-              setEndDate(e.target.value);
-            }}
+            onChange={(e) => setEndDate(e.target.value)}
           />
         </label>
         <Button onClick={handleExport} disabled={exporting || startDate > endDate} className="ml-auto">

@@ -5,19 +5,17 @@ import { v4 as uuid } from "uuid";
 import { useSupabaseStore } from "@/lib/useSupabaseStore";
 import { Button, Card, CollapsibleSection, Input, SectionHeading } from "@/components/ui";
 import { EmployeeNameInput } from "@/components/EmployeeNameInput";
-import { addMonthsISO, formatDate, formatTime12, todayISO } from "@/lib/dates";
+import { formatDate, formatTime12, todayISO } from "@/lib/dates";
 import { useNotifications } from "@/lib/notificationContext";
 import type {
   ER2ReportRow,
-  RegularizationReportRow,
   EventReportRow,
-  PlanReportRow,
   CustomReportTable,
   COERequest,
   COECategory,
   EventStatus,
 } from "@/types";
-import { EMPLOYMENT_MILESTONE_MONTHS, EVENT_STATUS_LABELS } from "@/types";
+import { EVENT_STATUS_LABELS } from "@/types";
 import { ReportExportSection } from "./ExportSection";
 import { SixthMonthReport } from "./SixthMonthReport";
 import { ER2FormSection } from "./ER2FormSection";
@@ -32,11 +30,9 @@ export default function ReportsPage() {
       <div className="flex flex-col gap-6">
         <ER2Table />
         <ER2FormSection />
-        <RegularizationTable />
         <COEReportSection />
         <SixthMonthReport />
         <EventsTable />
-        <PlanTable />
         <CustomTablesSection />
         <ReportExportSection />
         
@@ -227,206 +223,6 @@ function ER2Table() {
                         onDelete={() => {
                           remove(r.id);
                           notify("ER2 row deleted", "deleted");
-                        }}
-                      />
-                    </td>
-                  </tr>
-                )
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </CollapsibleSection>
-  );
-}
-
-/* ------------------------- Confirmation of Regularization ------------------------- */
-
-/**
- * The 6th-month milestone date for a hire date, ready for a date input.
- *
- * The letter confirms regularization on the day the Employment Milestones panel says it
- * falls, so the report derives it the same way that panel does rather than asking the user
- * to copy it across and risk the two disagreeing. It stays editable: the date can be moved
- * if regularization actually happened on another day.
- */
-function sixthMonthDateInput(dateHired?: string): string {
-  if (!dateHired) return "";
-  return addMonthsISO(dateHired, EMPLOYMENT_MILESTONE_MONTHS.sixthMonth).slice(0, 10);
-}
-
-type RegDraft = {
-  employeeName: string;
-  position: string;
-  department: string;
-  dateOfRegularization: string;
-  dateCreated: string;
-};
-
-function emptyRegDraft(): RegDraft {
-  return {
-    employeeName: "",
-    position: "",
-    department: "",
-    dateOfRegularization: todayISO().slice(0, 10),
-    dateCreated: todayISO().slice(0, 10),
-  };
-}
-
-function RegularizationTable() {
-  const { items, hydrated, add, update, remove } = useSupabaseStore<RegularizationReportRow>(
-    "hr_report_regularization",
-    []
-  );
-  /** Latest first. */
-  const sortedItems = [...items].sort((a, b) => (a.dateCreated < b.dateCreated ? 1 : -1));
-  const { notify } = useNotifications();
-  const [form, setForm] = useState<RegDraft>(emptyRegDraft());
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [draft, setDraft] = useState<RegDraft>(emptyRegDraft());
-
-  function addRow() {
-    if (!form.employeeName.trim()) return;
-    add({
-      id: uuid(),
-      employeeName: form.employeeName,
-      position: form.position,
-      department: form.department,
-      dateOfRegularization: toISO(form.dateOfRegularization),
-      dateCreated: toISO(form.dateCreated) || todayISO(),
-    });
-    setForm(emptyRegDraft());
-    notify("Regularization row added", "created");
-  }
-
-  function startEdit(r: RegularizationReportRow) {
-    setEditingId(r.id);
-    setDraft({
-      employeeName: r.employeeName,
-      position: r.position,
-      department: r.department,
-      dateOfRegularization: r.dateOfRegularization.slice(0, 10),
-      dateCreated: r.dateCreated.slice(0, 10),
-    });
-  }
-
-  function saveEdit(id: string) {
-    if (!draft.employeeName.trim()) return;
-    update(id, {
-      employeeName: draft.employeeName,
-      position: draft.position,
-      department: draft.department,
-      dateOfRegularization: toISO(draft.dateOfRegularization),
-      dateCreated: toISO(draft.dateCreated) || todayISO(),
-    });
-    setEditingId(null);
-    notify("Regularization row updated", "updated");
-  }
-
-  if (!hydrated) return null;
-  return (
-    <CollapsibleSection title="Confirmation of Regularization Report" count={items.length}>
-      <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-6 sm:items-end">
-        <EmployeeNameInput
-          value={form.employeeName}
-          onChange={(employeeName) => setForm((f) => ({ ...f, employeeName }))}
-          onSelect={(e) =>
-            setForm((f) => ({
-              ...f,
-              employeeName: e.name,
-              position: e.position,
-              department: e.department,
-              dateOfRegularization: sixthMonthDateInput(e.dateHired) || f.dateOfRegularization,
-            }))
-          }
-        />
-        <Input placeholder="Position" value={form.position} onChange={(e) => setForm((f) => ({ ...f, position: e.target.value }))} />
-        <Input placeholder="Department" value={form.department} onChange={(e) => setForm((f) => ({ ...f, department: e.target.value }))} />
-        <label className="flex flex-col gap-1 text-[11px] text-ink-muted">
-          Date Created
-          <Input type="date" value={form.dateCreated} onChange={(e) => setForm((f) => ({ ...f, dateCreated: e.target.value }))} />
-        </label>
-        <label className="flex flex-col gap-1 text-[11px] text-ink-muted">
-          Date of Regularization
-          <Input type="date" value={form.dateOfRegularization} onChange={(e) => setForm((f) => ({ ...f, dateOfRegularization: e.target.value }))} />
-        </label>
-        <Button onClick={addRow} className="self-end">+ Add</Button>
-      </div>
-      <TableTotal label="Total Employees" count={items.length} />
-      {items.length > 0 && (
-        <div className="mt-3 overflow-x-auto rounded-lg border border-border">
-          <table className="w-full min-w-[700px] text-left text-sm">
-            <thead>
-              <tr className="bg-background text-xs uppercase tracking-wide text-ink-muted">
-                <th className="px-3 py-2">Employee Name</th>
-                <th className="px-3 py-2">Position</th>
-                <th className="px-3 py-2">Department</th>
-                <th className="px-3 py-2">Date Created</th>
-                <th className="px-3 py-2">Date of Regularization</th>
-                <th className="px-3 py-2" />
-              </tr>
-            </thead>
-            <tbody>
-              {sortedItems.map((r) =>
-                editingId === r.id ? (
-                  <tr key={r.id} className="border-t border-border">
-                    <td className="px-3 py-2">
-                      <EmployeeNameInput
-                        value={draft.employeeName}
-                        onChange={(employeeName) => setDraft((d) => ({ ...d, employeeName }))}
-                        onSelect={(e) =>
-                          setDraft((d) => ({
-                            ...d,
-                            employeeName: e.name,
-                            position: e.position,
-                            department: e.department,
-                            dateOfRegularization:
-                              sixthMonthDateInput(e.dateHired) || d.dateOfRegularization,
-                          }))
-                        }
-                        className="min-w-[180px]"
-                      />
-                    </td>
-                    <td className="px-3 py-2">
-                      <Input value={draft.position} onChange={(e) => setDraft((d) => ({ ...d, position: e.target.value }))} />
-                    </td>
-                    <td className="px-3 py-2">
-                      <Input value={draft.department} onChange={(e) => setDraft((d) => ({ ...d, department: e.target.value }))} />
-                    </td>
-                    <td className="px-3 py-2">
-                      <Input
-                        type="date"
-                        value={draft.dateCreated}
-                        onChange={(e) => setDraft((d) => ({ ...d, dateCreated: e.target.value }))}
-                        className="min-w-[150px]"
-                      />
-                    </td>
-                    <td className="px-3 py-2">
-                      <Input
-                        type="date"
-                        value={draft.dateOfRegularization}
-                        onChange={(e) => setDraft((d) => ({ ...d, dateOfRegularization: e.target.value }))}
-                        className="min-w-[150px]"
-                      />
-                    </td>
-                    <td className="px-3 py-2">
-                      <EditActions onSave={() => saveEdit(r.id)} onCancel={() => setEditingId(null)} />
-                    </td>
-                  </tr>
-                ) : (
-                  <tr key={r.id} className="border-t border-border">
-                    <td className="px-3 py-2 text-ink">{r.employeeName}</td>
-                    <td className="px-3 py-2 text-ink-muted">{r.position || "—"}</td>
-                    <td className="px-3 py-2 text-ink-muted">{r.department || "—"}</td>
-                    <td className="px-3 py-2 text-ink-muted">{formatDate(r.dateCreated, "MMMM d, yyyy")}</td>
-                    <td className="px-3 py-2 text-ink-muted">{formatDate(r.dateOfRegularization, "MMMM d, yyyy")}</td>
-                    <td className="px-3 py-2">
-                      <RowActions
-                        onEdit={() => startEdit(r)}
-                        onDelete={() => {
-                          remove(r.id);
-                          notify("Regularization row deleted", "deleted");
                         }}
                       />
                     </td>
@@ -889,101 +685,6 @@ function EventsTable() {
                         onDelete={() => {
                           remove(r.id);
                           notify("Event row deleted", "deleted");
-                        }}
-                      />
-                    </td>
-                  </tr>
-                )
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </CollapsibleSection>
-  );
-}
-
-/* ------------------------------ Plan for Next Week ------------------------------ */
-
-type PlanDraft = { plan: string; startDate: string; endDate: string };
-
-function PlanTable() {
-  const { items, hydrated, add, update, remove } = useSupabaseStore<PlanReportRow>("hr_report_plans", []);
-  /** Nearest upcoming date first, so the plan that comes due soonest is what's on top. */
-  const sortedItems = [...items].sort((a, b) => (a.startDate < b.startDate ? -1 : 1));
-  const { notify } = useNotifications();
-  const [form, setForm] = useState<PlanDraft>({ plan: "", startDate: todayISO().slice(0, 10), endDate: todayISO().slice(0, 10) });
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [draft, setDraft] = useState<PlanDraft>({ plan: "", startDate: todayISO().slice(0, 10), endDate: todayISO().slice(0, 10) });
-
-  function addRow() {
-    if (!form.plan.trim()) return;
-    add({ id: uuid(), plan: form.plan, startDate: toISO(form.startDate), endDate: toISO(form.endDate) });
-    setForm({ plan: "", startDate: todayISO().slice(0, 10), endDate: todayISO().slice(0, 10) });
-    notify("Plan added", "created");
-  }
-
-  function startEdit(r: PlanReportRow) {
-    setEditingId(r.id);
-    setDraft({ plan: r.plan, startDate: r.startDate.slice(0, 10), endDate: r.endDate.slice(0, 10) });
-  }
-
-  function saveEdit(id: string) {
-    if (!draft.plan.trim()) return;
-    update(id, { plan: draft.plan, startDate: toISO(draft.startDate), endDate: toISO(draft.endDate) });
-    setEditingId(null);
-    notify("Plan updated", "updated");
-  }
-
-  if (!hydrated) return null;
-  return (
-    <CollapsibleSection title="Plan for Next Week" count={items.length}>
-      <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-4">
-        <Input placeholder="Plan for Next Week" value={form.plan} onChange={(e) => setForm((f) => ({ ...f, plan: e.target.value }))} className="sm:col-span-2" />
-        <Input type="date" value={form.startDate} onChange={(e) => setForm((f) => ({ ...f, startDate: e.target.value }))} />
-        <Input type="date" value={form.endDate} onChange={(e) => setForm((f) => ({ ...f, endDate: e.target.value }))} />
-      </div>
-      <Button className="mt-2" onClick={addRow}>+ Add</Button>
-      <TableTotal label="Total Plans" count={items.length} />
-      {items.length > 0 && (
-        <div className="mt-3 overflow-x-auto rounded-lg border border-border">
-          <table className="w-full min-w-[600px] text-left text-sm">
-            <thead>
-              <tr className="bg-background text-xs uppercase tracking-wide text-ink-muted">
-                <th className="px-3 py-2">Plan for Next Week</th>
-                <th className="px-3 py-2">Start Date</th>
-                <th className="px-3 py-2">End Date</th>
-                <th className="px-3 py-2" />
-              </tr>
-            </thead>
-            <tbody>
-              {sortedItems.map((r) =>
-                editingId === r.id ? (
-                  <tr key={r.id} className="border-t border-border">
-                    <td className="px-3 py-2">
-                      <Input value={draft.plan} onChange={(e) => setDraft((d) => ({ ...d, plan: e.target.value }))} />
-                    </td>
-                    <td className="px-3 py-2">
-                      <Input type="date" value={draft.startDate} onChange={(e) => setDraft((d) => ({ ...d, startDate: e.target.value }))} className="min-w-[150px]" />
-                    </td>
-                    <td className="px-3 py-2">
-                      <Input type="date" value={draft.endDate} onChange={(e) => setDraft((d) => ({ ...d, endDate: e.target.value }))} className="min-w-[150px]" />
-                    </td>
-                    <td className="px-3 py-2">
-                      <EditActions onSave={() => saveEdit(r.id)} onCancel={() => setEditingId(null)} />
-                    </td>
-                  </tr>
-                ) : (
-                  <tr key={r.id} className="border-t border-border">
-                    <td className="px-3 py-2 text-ink">{r.plan}</td>
-                    <td className="px-3 py-2 text-ink-muted">{formatDate(r.startDate, "MMMM d, yyyy")}</td>
-                    <td className="px-3 py-2 text-ink-muted">{formatDate(r.endDate, "MMMM d, yyyy")}</td>
-                    <td className="px-3 py-2">
-                      <RowActions
-                        onEdit={() => startEdit(r)}
-                        onDelete={() => {
-                          remove(r.id);
-                          notify("Plan deleted", "deleted");
                         }}
                       />
                     </td>
