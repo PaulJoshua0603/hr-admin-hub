@@ -52,13 +52,15 @@ import {
   FIXED_MONTHLY_ALLOWANCES,
   formatAmount,
   regularizationIncrease,
+  REGULARIZATION_RAISE_REASON,
+  DEFAULT_WORK_LOCATION,
   type SalaryChange,
 } from "@/types";
 
 const LAST_PAY_DAYS_AFTER_LAST_DAY = 35;
 
 /** The one reason string that identifies the 6th-month raise in an employee's history. */
-const REGULARIZATION_REASON = "6th Month Appraisal / Regularization";
+const REGULARIZATION_REASON = REGULARIZATION_RAISE_REASON;
 
 function requirementTone(
   s: RequirementStatus
@@ -645,6 +647,123 @@ export default function EmployeeDetailPage({
             />
           </FieldGroup>
         </div>
+        {/* Everything captured by Add Employee, editable here — position and department
+            used to be changeable only from the status row in the list. */}
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <FieldGroup label="Full Name">
+            <Input
+              value={employee.name}
+              disabled={!isEditing}
+              onChange={(e) => update(employee.id, { name: e.target.value })}
+            />
+          </FieldGroup>
+          <FieldGroup label="Position">
+            <Input
+              value={employee.position || ""}
+              disabled={!isEditing}
+              onChange={(e) => update(employee.id, { position: e.target.value })}
+            />
+          </FieldGroup>
+          <FieldGroup label="Department">
+            <Input
+              value={employee.department || ""}
+              disabled={!isEditing}
+              onChange={(e) => update(employee.id, { department: e.target.value })}
+            />
+          </FieldGroup>
+          <FieldGroup label="Client">
+            <Input
+              value={employee.client || ""}
+              disabled={!isEditing}
+              onChange={(e) => update(employee.id, { client: e.target.value })}
+            />
+          </FieldGroup>
+          <FieldGroup label="Applicant Type">
+            <select
+              value={employee.applicantType || ""}
+              disabled={!isEditing}
+              onChange={(e) =>
+                update(employee.id, {
+                  applicantType: (e.target.value || undefined) as Employee["applicantType"],
+                })
+              }
+              className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-accent disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <option value="">Select…</option>
+              <option value="new">New Applicant</option>
+              <option value="replacement">Replacement</option>
+            </select>
+          </FieldGroup>
+          <FieldGroup label="Reliever">
+            <div className="flex h-9 items-center">
+              <Checkbox
+                checked={!!employee.isReliever}
+                disabled={!isEditing}
+                onChange={(checked) => update(employee.id, { isReliever: checked })}
+                label="This employee is a reliever"
+              />
+            </div>
+          </FieldGroup>
+        </div>
+        {employee.isReliever && (
+          <div className="mt-4 rounded-lg border border-border bg-background p-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-ink-muted">
+              Reliever assignment
+            </p>
+            <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <FieldGroup label="End Date of the Reliever Assignment">
+                <Input
+                  type="date"
+                  value={employee.relieverEndDate ? employee.relieverEndDate.slice(0, 10) : ""}
+                  disabled={!isEditing}
+                  onChange={(e) =>
+                    update(employee.id, {
+                      relieverEndDate: e.target.value
+                        ? new Date(e.target.value).toISOString()
+                        : undefined,
+                    })
+                  }
+                />
+              </FieldGroup>
+              <FieldGroup label="Employee Being Replaced">
+                <Input
+                  value={employee.replacedEmployeeName || ""}
+                  disabled={!isEditing}
+                  onChange={(e) => update(employee.id, { replacedEmployeeName: e.target.value })}
+                />
+              </FieldGroup>
+              <FieldGroup label="Position Being Replaced">
+                <Input
+                  value={employee.replacedPosition || ""}
+                  disabled={!isEditing}
+                  onChange={(e) => update(employee.id, { replacedPosition: e.target.value })}
+                />
+              </FieldGroup>
+              <FieldGroup label="Reason for the Replacement">
+                <Input
+                  value={employee.relieverReason || ""}
+                  disabled={!isEditing}
+                  onChange={(e) => update(employee.id, { relieverReason: e.target.value })}
+                />
+              </FieldGroup>
+              <FieldGroup label="Work Location">
+                <Input
+                  value={employee.workLocation ?? DEFAULT_WORK_LOCATION}
+                  disabled={!isEditing}
+                  onChange={(e) => update(employee.id, { workLocation: e.target.value })}
+                />
+              </FieldGroup>
+              <FieldGroup label="Job Duties of the Position Being Replaced">
+                <Textarea
+                  rows={4}
+                  value={employee.replacedJobDuties || ""}
+                  disabled={!isEditing}
+                  onChange={(e) => update(employee.id, { replacedJobDuties: e.target.value })}
+                />
+              </FieldGroup>
+            </div>
+          </div>
+        )}
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <FieldGroup label="Birthday">
             <div className="flex w-full flex-col gap-1">
@@ -816,6 +935,79 @@ export default function EmployeeDetailPage({
               value={employee.immediateSupervisor || ""}
               disabled={!isEditing}
               onChange={(e) => update(employee.id, { immediateSupervisor: e.target.value })}
+            />
+          </FieldGroup>
+          <FieldGroup label="Cost Center">
+            <Input
+              value={employee.costCenter || ""}
+              disabled={!isEditing}
+              onChange={(e) => update(employee.id, { costCenter: e.target.value })}
+            />
+          </FieldGroup>
+          <FieldGroup label="Mobile No.">
+            <Input
+              inputMode="tel"
+              placeholder="e.g. 0917 123 4567"
+              value={employee.mobileNo || ""}
+              disabled={!isEditing}
+              onChange={(e) => update(employee.id, { mobileNo: e.target.value })}
+            />
+          </FieldGroup>
+          <FieldGroup label="SSS No.">
+            <Input
+              value={employee.sssNo || ""}
+              disabled={!isEditing}
+              onChange={(e) => update(employee.id, { sssNo: e.target.value })}
+            />
+          </FieldGroup>
+          <FieldGroup label="Pag-IBIG No.">
+            <Input
+              value={employee.pagibigNo || ""}
+              disabled={!isEditing}
+              onChange={(e) => update(employee.id, { pagibigNo: e.target.value })}
+            />
+          </FieldGroup>
+          <FieldGroup label="TIN No.">
+            <Input
+              value={employee.tinNo || ""}
+              disabled={!isEditing}
+              onChange={(e) => update(employee.id, { tinNo: e.target.value })}
+            />
+          </FieldGroup>
+        </div>
+      </Card>
+
+      <Card className="mb-6">
+        <h2 className="font-display text-lg text-ink">Contact in Case of Emergency</h2>
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <FieldGroup label="Name">
+            <Input
+              value={employee.emergencyContactName || ""}
+              disabled={!isEditing}
+              onChange={(e) => update(employee.id, { emergencyContactName: e.target.value })}
+            />
+          </FieldGroup>
+          <FieldGroup label="Relationship">
+            <Input
+              placeholder="e.g. Mother"
+              value={employee.emergencyContactRelationship || ""}
+              disabled={!isEditing}
+              onChange={(e) => update(employee.id, { emergencyContactRelationship: e.target.value })}
+            />
+          </FieldGroup>
+          <FieldGroup label="Address">
+            <Input
+              value={employee.emergencyContactAddress || ""}
+              disabled={!isEditing}
+              onChange={(e) => update(employee.id, { emergencyContactAddress: e.target.value })}
+            />
+          </FieldGroup>
+          <FieldGroup label="Telephone No.">
+            <Input
+              inputMode="tel"
+              value={employee.emergencyContactPhone || ""}
+              disabled={!isEditing}
+              onChange={(e) => update(employee.id, { emergencyContactPhone: e.target.value })}
             />
           </FieldGroup>
         </div>

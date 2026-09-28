@@ -16,6 +16,7 @@ import {
 } from "@/lib/dates";
 import {
   Button,
+  buttonClasses,
   Card,
   EmptyState,
   FileButton,
@@ -43,6 +44,7 @@ import {
   type ER2ReportRow,
   type EventReportRow,
   type MilestoneNote,
+  regularizationNewGross,
   withNotesTaskListAdditions,
 } from "@/types";
 import { useNotifications } from "@/lib/notificationContext";
@@ -110,7 +112,7 @@ function isActive(e: Employee): boolean {
 }
 
 export default function EmployeesPage() {
-  const { items: employees, hydrated, add, update, remove, setItems } = useSupabaseStore<Employee>(
+  const { items: employees, hydrated, add, remove, setItems } = useSupabaseStore<Employee>(
     "hr_employees",
     []
   );
@@ -145,13 +147,8 @@ export default function EmployeesPage() {
   const [workLocation, setWorkLocation] = useState(DEFAULT_WORK_LOCATION);
   const [position, setPosition] = useState("");
   const [department, setDepartment] = useState("");
-  const [dateSent, setDateSent] = useState(todayISO().slice(0, 10));
+  const [client, setClient] = useState("");
   const [dateHired, setDateHired] = useState("");
-
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editName, setEditName] = useState("");
-  const [editPosition, setEditPosition] = useState("");
-  const [editDepartment, setEditDepartment] = useState("");
 
 
   /**
@@ -264,28 +261,6 @@ export default function EmployeesPage() {
     setSyncPreview(null);
   }
 
-  function startEdit(e: Employee) {
-    setEditingId(e.id);
-    setEditName(e.name);
-    setEditPosition(e.position || "");
-    setEditDepartment(e.department || "");
-  }
-
-  function cancelEdit() {
-    setEditingId(null);
-  }
-
-  function saveEdit(id: string) {
-    if (!editName.trim()) return;
-    update(id, {
-      name: editName.trim(),
-      position: editPosition.trim() || undefined,
-      department: editDepartment.trim() || undefined,
-    });
-    notify(`Employee updated: "${editName.trim()}"`, "updated");
-    setEditingId(null);
-  }
-
   /**
    * The full name, built from the parts the same way an import builds it ("First M. Last")
    * unless it has been typed over by hand.
@@ -297,7 +272,9 @@ export default function EmployeesPage() {
     const finalName = effectiveName.trim();
     if (!finalName) return;
     const dateAdded = todayISO();
-    const sentISO = dateSent ? new Date(dateSent).toISOString() : dateAdded;
+    // No longer asked for on the form; the requirements clock starts the day they're added,
+    // and the date can still be set on the employee's own page.
+    const sentISO = dateAdded;
     add({
       id: uuid(),
       name: finalName,
@@ -308,6 +285,7 @@ export default function EmployeesPage() {
       lastName: lastName.trim() || undefined,
       position: position.trim() || undefined,
       department: department.trim() || undefined,
+      client: client.trim() || undefined,
       // Only carried when this is a reliever, so an ordinary hire keeps a clean record.
       isReliever: isReliever || undefined,
       relieverEndDate: isReliever && relieverEndDate ? new Date(relieverEndDate).toISOString() : undefined,
@@ -340,7 +318,7 @@ export default function EmployeesPage() {
     setWorkLocation(DEFAULT_WORK_LOCATION);
     setPosition("");
     setDepartment("");
-    setDateSent(todayISO().slice(0, 10));
+    setClient("");
     setDateHired("");
     setShowForm(false);
   }
@@ -999,19 +977,11 @@ export default function EmployeesPage() {
               />
             </label>
             <label className="flex flex-col gap-1 text-xs text-ink-muted">
-              Date MC sent pre-employment requirements
+              Client
               <Input
-                type="date"
-                value={dateSent}
-                onChange={(e) => setDateSent(e.target.value)}
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-xs text-ink-muted">
-              Requirements Deadline
-              <Input
-                type="date"
-                value={dateSent ? addDaysISO(new Date(dateSent).toISOString(), 14).slice(0, 10) : ""}
-                disabled
+                placeholder="Client"
+                value={client}
+                onChange={(e) => setClient(e.target.value)}
               />
             </label>
             <label className="flex flex-col gap-1 text-xs text-ink-muted">
@@ -1108,8 +1078,8 @@ export default function EmployeesPage() {
           <p className="mt-2 text-xs text-ink-muted">
             Full Name fills in from Last / First / Middle as &ldquo;First M. Last&rdquo; — type over
             it if this person is written differently. The three names are stored separately so the
-            ER2 PhilHealth form can print the full middle name instead of an initial. Requirements
-            deadline auto-fills to 2 weeks after the date sent.
+            ER2 PhilHealth form can print the full middle name instead of an initial. Everything
+            entered here can be seen and edited later by clicking the employee&apos;s name.
           </p>
           <div className="mt-3 flex gap-2">
             <Button onClick={handleAdd}>Save employee</Button>
@@ -1131,37 +1101,6 @@ export default function EmployeesPage() {
           .map((e) => {
           const status = statusOf(e);
           const missingCritical = getMissingCriticalItems(e);
-
-          if (editingId === e.id) {
-            return (
-              <Card key={e.id} className="flex flex-col gap-3">
-                <div className="grid gap-2 sm:grid-cols-3">
-                  <Input
-                    placeholder="Employee name"
-                    value={editName}
-                    onChange={(ev) => setEditName(ev.target.value)}
-                    autoFocus
-                  />
-                  <Input
-                    placeholder="Position"
-                    value={editPosition}
-                    onChange={(ev) => setEditPosition(ev.target.value)}
-                  />
-                  <Input
-                    placeholder="Department"
-                    value={editDepartment}
-                    onChange={(ev) => setEditDepartment(ev.target.value)}
-                  />
-                </div>
-                <div className="flex gap-2">
-                  <Button onClick={() => saveEdit(e.id)}>Save</Button>
-                  <Button variant="ghost" onClick={cancelEdit}>
-                    Cancel
-                  </Button>
-                </div>
-              </Card>
-            );
-          }
 
           return (
             <Card key={e.id} className="flex items-center justify-between hover:border-accent transition-colors">
@@ -1187,9 +1126,11 @@ export default function EmployeesPage() {
                   {isActive(e) ? "Active" : "Inactive"}
                 </Pill>
                 <Pill tone={status.tone}>{status.label}</Pill>
-                <Button variant="ghost" onClick={() => startEdit(e)}>
-                  Edit
-                </Button>
+                {/* Name, position, department and client are all edited on the employee's
+                    own page now, under Employee details, alongside everything else. */}
+                <Link href={`/employees/${e.id}`} className={buttonClasses("ghost")}>
+                  Edit details
+                </Link>
               </div>
             </Card>
           );
@@ -1458,7 +1399,23 @@ type FilterRow = {
   replacedPosition?: string;
   /** Only on a Resigned row: why they left, when the system can say. */
   reason?: string;
+  /**
+   * The date to show, when it differs from the one the row is filtered and sorted on — a
+   * birthday row is placed by this year's occurrence but shows the birthday as recorded.
+   */
+  displayDate?: string;
 };
+
+/**
+ * This year's occurrence of a birthday, as the same UTC-midnight form every stored date
+ * uses. Built from the UTC day and month on purpose: rebuilding it as local midnight and
+ * converting back lands on the previous day anywhere east of UTC, which is how a 28
+ * September birthday was showing as the 27th.
+ */
+function birthdayThisYear(birthday: string, year: number): string {
+  const b = new Date(birthday);
+  return new Date(Date.UTC(year, b.getUTCMonth(), b.getUTCDate())).toISOString();
+}
 
 /**
  * Orders a list of dates, putting the ones with no date last either way.
@@ -1793,27 +1750,18 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
     // milestones
     if (milestoneType === "birthday") {
       return employees
-        .filter((e) => {
-          if (!e.birthday) return false;
-          const b = new Date(e.birthday);
-          const thisYear = new Date(today.getFullYear(), b.getMonth(), b.getDate())
-            .toISOString()
-            .slice(0, 10);
-          return inRange(thisYear, startDate, endDate);
-        })
-        .map((e) => {
-          const b = new Date(e.birthday!);
-          const thisYear = new Date(today.getFullYear(), b.getMonth(), b.getDate()).toISOString();
-          return {
-            id: e.id,
-            name: e.name,
-            position: e.position || "",
-            department: e.department || "",
-            email: e.realcognitaEmail || "",
-            supervisor: e.immediateSupervisor || "",
-            date: thisYear,
-          };
-        });
+        .filter((e) => e.birthday && inRange(birthdayThisYear(e.birthday, today.getFullYear()), startDate, endDate))
+        .map((e) => ({
+          id: e.id,
+          name: e.name,
+          position: e.position || "",
+          department: e.department || "",
+          email: e.realcognitaEmail || "",
+          supervisor: e.immediateSupervisor || "",
+          // Filtered and sorted on this year's occurrence, but shown as recorded.
+          date: birthdayThisYear(e.birthday!, today.getFullYear()),
+          displayDate: e.birthday,
+        }));
     }
     if (milestoneType === "relieverEnd") {
       // Driven by the date entered on the reliever engagement, not by the hire date.
@@ -1957,11 +1905,17 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
       const isSixth = type === "sixth";
       const isReliever = type === "relieverEnd";
 
-      /** What each sheet is called inside, e.g. "September 3rd Month Assessment". */
+      /**
+       * What each sheet is called inside: "October 2026 Regular Employees" for the 6th
+       * month — the month they regularize — and "September 3rd Month Assessment" style for
+       * the rest.
+       */
       const sheetTitle = (monthLabel: string) =>
-        isThird || isSixth
-          ? `${monthLabel} ${MILESTONE_LABELS[type]} Assessment`
-          : `${monthLabel} ${MILESTONE_LABELS[type]}`;
+        isSixth
+          ? `${monthLabel} Regular Employees`
+          : isThird
+            ? `${monthLabel} ${MILESTONE_LABELS[type]} Assessment`
+            : `${monthLabel} ${MILESTONE_LABELS[type]}`;
 
       const columns = isThird
         ? ["Employee Name", "Position", "Department", "Immediate Supervisor", "3rd Month Date"]
@@ -1971,7 +1925,8 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
               "Position",
               "Department",
               "Salary Status",
-              "Salary Increase Percentage",
+              "Percentage",
+              "New Gross",
               "6th Month Date",
             ]
           : [
@@ -1995,7 +1950,8 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
           const percent = (e?.regularizationIncreasePercent || "").trim();
           return ["With Increase", percent ? `${percent}%` : ""];
         }
-        if (review === "asIs") return ["As Is Salary", "N/A"];
+        // Blank rather than "N/A": an unchanged salary simply has no percentage.
+        if (review === "asIs") return ["As Is Salary", ""];
         // Never "As Is Salary" by default — nothing has been decided for this employee yet.
         return [NOT_SET_LABEL, ""];
       }
@@ -2006,7 +1962,18 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
         }
         if (isSixth) {
           const [status, percent] = salaryCells(r.id);
-          return [r.name, r.position, r.department, status, percent, formatDate(r.date, "MMMM d, yyyy")];
+          const employee = employees.find((x) => x.id === r.id);
+          // The "New Total Monthly Gross" from the employee's milestone; blank when none.
+          const newGross = employee ? regularizationNewGross(employee) : null;
+          return [
+            r.name,
+            r.position,
+            r.department,
+            status,
+            percent,
+            newGross ? `₱${newGross}` : "",
+            formatDate(r.date, "MMMM d, yyyy"),
+          ];
         }
         return [
           r.name,
@@ -2017,7 +1984,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
           ...(isReliever
             ? [r.replacedName || "", r.replacedReason || "", r.replacedPosition || ""]
             : []),
-          formatDate(r.date, "MMMM d, yyyy"),
+          formatDate(r.displayDate || r.date, "MMMM d, yyyy"),
           noteFor(r.id, type),
         ];
       }
@@ -2034,6 +2001,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
           pattern: "solid",
           fgColor: { argb: "FFE4F0EE" },
         };
+        if (isSixth) titleRow.getCell(1).alignment = { horizontal: "center", vertical: "middle" };
 
         const headerRow = ws.addRow(columns);
         headerRow.eachCell((cell) => {
@@ -2045,25 +2013,26 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
         ws.addRow([]);
         const totalRow = ws.addRow([`Total: ${sheetRows.length}`]);
         totalRow.getCell(1).font = { bold: true };
+        // The 6th-month total is what gets read off the sheet, so it is picked out in yellow.
+        if (isSixth) {
+          totalRow.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFFF00" } };
+        }
       }
 
       function computeRowsFor(kind: MilestoneType): FilterRow[] {
         if (kind === "birthday") {
           return employees
             .filter((e) => e.birthday)
-            .map((e) => {
-              const b = new Date(e.birthday!);
-              const thisYear = new Date(today.getFullYear(), b.getMonth(), b.getDate()).toISOString();
-              return {
-                id: e.id,
-                name: e.name,
-                position: e.position || "",
-                department: e.department || "",
-                email: e.realcognitaEmail || "",
-                supervisor: e.immediateSupervisor || "",
-                date: thisYear,
-              };
-            })
+            .map((e) => ({
+              id: e.id,
+              name: e.name,
+              position: e.position || "",
+              department: e.department || "",
+              email: e.realcognitaEmail || "",
+              supervisor: e.immediateSupervisor || "",
+              date: birthdayThisYear(e.birthday!, today.getFullYear()),
+              displayDate: e.birthday,
+            }))
             .filter((r) => inRange(r.date, startDate, endDate))
             .sort((a, b) => (a.date < b.date ? -1 : 1));
         }
@@ -2435,7 +2404,9 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                               <td className="px-3 py-2 text-ink-muted">{r.replacedPosition || "—"}</td>
                             </>
                           )}
-                          <td className="px-3 py-2 text-ink-muted">{formatDate(r.date, "MMMM d, yyyy")}</td>
+                          <td className="px-3 py-2 text-ink-muted">
+                            {formatDate(r.displayDate || r.date, "MMMM d, yyyy")}
+                          </td>
                           {isMilestoneView && (
                             <td className="px-3 py-2">
                               {milestoneType === "sixth" ? (

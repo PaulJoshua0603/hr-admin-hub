@@ -484,6 +484,21 @@ export function formatAmount(value: number): string {
   return value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+/** The reason that marks the 6th-month raise in an employee's salary history. */
+export const REGULARIZATION_RAISE_REASON = "6th Month Appraisal / Regularization";
+
+/**
+ * The "New Total Monthly Gross" shown in an employee's 6th-month milestone: the figure
+ * the raise was applied at, once it has been, and otherwise what it works out to. Null
+ * when neither exists — no increase on file.
+ */
+export function regularizationNewGross(e: Employee): string | null {
+  const applied = (e.salaryHistory || []).find((h) => h.reason === REGULARIZATION_RAISE_REASON);
+  if (applied?.newTotalMonthlyGrossCompensation) return applied.newTotalMonthlyGrossCompensation;
+  const raise = regularizationIncrease(e);
+  return raise ? formatAmount(raise.newGross) : null;
+}
+
 /**
  * What a regularization raise comes to.
  *
@@ -583,6 +598,20 @@ export type Employee = {
   gender?: string;
   immediateSupervisor?: string;
   workingHours?: string;
+  /** The client account the employee is placed on. */
+  client?: string;
+  /** Whether they were hired as a new applicant or as someone's replacement. */
+  applicantType?: "new" | "replacement";
+  costCenter?: string;
+  mobileNo?: string;
+  sssNo?: string;
+  pagibigNo?: string;
+  tinNo?: string;
+  // Contact in case of emergency
+  emergencyContactName?: string;
+  emergencyContactAddress?: string;
+  emergencyContactPhone?: string;
+  emergencyContactRelationship?: string;
   // Reliever engagement. Only meaningful when isReliever is true; the temporary contract
   // and the end-of-contract milestone are both driven from these.
   isReliever?: boolean;
