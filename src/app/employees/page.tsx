@@ -1750,7 +1750,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
     // milestones
     if (milestoneType === "birthday") {
       return employees
-        .filter((e) => e.birthday && inRange(birthdayThisYear(e.birthday, today.getFullYear()), startDate, endDate))
+        .filter((e) => e.birthday && separationDate(e) === null && inRange(birthdayThisYear(e.birthday, today.getFullYear()), startDate, endDate))
         .map((e) => ({
           id: e.id,
           name: e.name,
@@ -2022,7 +2022,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
       function computeRowsFor(kind: MilestoneType): FilterRow[] {
         if (kind === "birthday") {
           return employees
-            .filter((e) => e.birthday)
+            .filter((e) => e.birthday && separationDate(e) === null)
             .map((e) => ({
               id: e.id,
               name: e.name,
