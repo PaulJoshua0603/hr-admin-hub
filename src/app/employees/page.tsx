@@ -8,7 +8,6 @@ import { useSupabaseStore } from "@/lib/useSupabaseStore";
 import {
   addDaysISO,
   addMonthsISO,
-  daysUntil,
   formatDate,
   formatTime12,
   isOverdue,
@@ -18,11 +17,9 @@ import {
   Button,
   buttonClasses,
   Card,
-  EmptyState,
   FileButton,
   Input,
   Pill,
-  SearchInput,
   SectionHeading,
   StatCard,
   StatusSelect,
@@ -53,12 +50,9 @@ import {
   performanceEvaluationDocxFileName,
 } from "@/lib/performanceEvalDocx";
 import {
-  countableEmployees,
   groupEmployees,
-  isAwaitingOnboarding,
   resignedCoeIndex,
   separationDate as separationDateOf,
-  separationReason,
 } from "@/lib/employeeStatus";
 import {
   NOT_SET_LABEL,
@@ -1179,11 +1173,25 @@ async function exportEmployeeCounts(
   };
 
   const BASE_COLUMNS = [
+    { header: "Employee ID", width: 14 },
     { header: "Full Name", width: 30 },
-    { header: "Position", width: 24 },
+    { header: "Last Name", width: 18 },
+    { header: "Middle Name", width: 18 },
+    { header: "First Name", width: 20 },
     { header: "Department", width: 20 },
     { header: "Immediate Supervisor", width: 24 },
   ];
+
+  // The split name columns prefer what was entered in Employee details; older records
+  // that only carry a full name fall back to reading it apart (middle initial at best).
+  const nameColumns = (e: Employee) => {
+    const parts = employeeNameParts(e);
+    return [
+      e.lastName?.trim() || parts.surname,
+      e.middleName?.trim() || parts.middleInitial,
+      e.firstName?.trim() || parts.first,
+    ];
+  };
 
   function addRows(ws: Sheet, rows: Employee[], dateLabel: string, extra?: string) {
     const columns = [...BASE_COLUMNS, { header: dateLabel, width: 18 }];
@@ -1198,8 +1206,9 @@ async function exportEmployeeCounts(
 
     [...rows].sort(bySurname).forEach((e) => {
       const row = [
+        e.companyIdNumber || "",
         filingName(e),
-        e.position || "",
+        ...nameColumns(e),
         e.department || "",
         e.immediateSupervisor || "",
         e.dateHired ? formatDate(e.dateHired, "MMMM d, yyyy") : "",
@@ -1223,7 +1232,7 @@ async function exportEmployeeCounts(
   const newHireTitle = currentSheet.addRow([`New Hires (${newHires.length})`]);
   newHireTitle.getCell(1).font = { bold: true, color: { argb: "FF0A2E2A" } };
   newHireTitle.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE4F0EE" } };
-  addRows(currentSheet, newHires, "Onboarding Date");
+  addRows(currentSheet, newHires, "Date Hired");
   currentSheet.addRow([]);
   const newHireTotal = currentSheet.addRow([`Total New Hires: ${newHires.length}`]);
   newHireTotal.getCell(1).font = { bold: true };
@@ -1381,7 +1390,7 @@ function EmployeeCountSummary({ employees }: { employees: Employee[] }) {
   );
 }
 
-type FilterCategory = "milestones" | "activeResigned" | "newHires";
+type FilterCategory = "milestones" | "newHires";
 type MilestoneType = "birthday" | "relieverEnd" | "third" | "sixth" | "oneYear";
 type TimeframePreset = "week" | "month" | "year" | "custom";
 
@@ -1415,22 +1424,6 @@ type FilterRow = {
 function birthdayThisYear(birthday: string, year: number): string {
   const b = new Date(birthday);
   return new Date(Date.UTC(year, b.getUTCMonth(), b.getUTCDate())).toISOString();
-}
-
-/**
- * Orders a list of dates, putting the ones with no date last either way.
- *
- * Every one of these lists is read newest-first except the new hires, who are read
- * soonest-first — nobody scrolls to the bottom to find who starts on Monday. A record with
- * no date on it goes to the end regardless, because an empty string sorts before every
- * real date and would otherwise head the list.
- */
-function byDate(direction: "newest" | "soonest") {
-  return (a: { date: string }, b: { date: string }) => {
-    if (!a.date) return b.date ? 1 : 0;
-    if (!b.date) return -1;
-    return direction === "newest" ? (a.date < b.date ? 1 : -1) : a.date < b.date ? -1 : 1;
-  };
 }
 
 function inRange(iso: string, start: string, end: string): boolean {
@@ -1501,8 +1494,6 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
   // Same store the Centralized COE Tracker writes, so a COE for Resigned added there
   // shows up in the Resigned Employees list here without any copying between the two.
   const { items: coeRequests } = useSupabaseStore<COERequest>("hr_coe_requests", []);
-  const [openCountList, setOpenCountList] = useState<"active" | "newHires" | "resigned" | null>(null);
-  const [countSearch, setCountSearch] = useState("");
   const { update: updateEmployee } = useSupabaseStore<Employee>("hr_employees", []);
 
   function noteFor(employeeId: string, type: MilestoneType): string {
@@ -1672,10 +1663,6 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
     }
   }
 
-  // Headcounts are taken over real people only; the admin account and any placeholder
-  // rows left by a test import are set aside so these cards match the HR export.
-  const roster = countableEmployees(employees);
-  const excludedCount = employees.length - roster.length;
   const separationDate = (e: Employee) => separationDateOf(e, coeIndex);
 
   function toFilterRow(e: Employee, date: string): FilterRow {
@@ -1690,50 +1677,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
     };
   }
 
-  // Active, new hires and resigned are shown in full rather than filtered by the date
-  // range above — these lists answer "who works here now", not "who changed this period".
-  const activeRows: FilterRow[] = roster
-    .filter((e) => separationDate(e) === null && !isAwaitingOnboarding(e))
-    .map((e) => toFilterRow(e, e.dateHired || ""))
-    .sort(byDate("newest"));
-
-  // Hired on paper but their onboarding date is still ahead of them.
-  const newHireRows: FilterRow[] = roster
-    .filter((e) => separationDate(e) === null && isAwaitingOnboarding(e))
-    .map((e) => toFilterRow(e, e.dateHired!))
-    .sort(byDate("soonest"));
-
-  const resignedRows: FilterRow[] = roster
-    .map((e) => ({ e, date: separationDate(e) }))
-    .filter((x): x is { e: Employee; date: string } => x.date !== null)
-    .map(({ e, date }) => ({ ...toFilterRow(e, date), reason: separationReason(e, coeIndex) }))
-    .sort(byDate("newest"));
-
-  // COE records naming someone who isn't in the employee list yet still belong here.
-  const knownNames = new Set(roster.map((e) => e.name.trim().toLowerCase()));
-  const orphanResignedRows: FilterRow[] = [...coeIndex.entries()]
-    .filter(([name]) => !knownNames.has(name))
-    .map(([name, date]) => {
-      const record = coeRequests.find(
-        (r) => r.category === "endOfEmployment" && r.employeeName.trim().toLowerCase() === name
-      );
-      return {
-        id: `coe-${name}`,
-        name: record?.employeeName || name,
-        position: record?.position || "",
-        department: record?.department || "",
-        email: record?.email || "",
-        supervisor: "",
-        date,
-      };
-    });
-
-  const allResignedRows: FilterRow[] = [...resignedRows, ...orphanResignedRows].sort(
-    byDate("newest")
-  );
-
   const rows: FilterRow[] = (() => {
-    if (category === "activeResigned") return [];
     if (category === "newHires") {
       return employees
         .filter((e) => e.dateHired && inRange(e.dateHired, startDate, endDate))
@@ -1841,8 +1785,8 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
   }
 
   /**
-   * Mirrors the on-screen Active/Resigned lists — every employee, not just those whose
-   * dates fall in the selected range, and counting COE-for-Resigned records the same way.
+   * New hires in the selected date range, earliest hire first, on one sheet named for
+   * the month the range starts in.
    */
   async function handleExportNewHires() {
     setExporting(true);
@@ -1850,26 +1794,48 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
       const ExcelJS = (await import("exceljs")).default;
       const wb = new ExcelJS.Workbook();
 
-      function buildSheet(sheetName: string, rangeStart: string, rangeEnd: string) {
-        const ws = wb.addWorksheet(sheetName);
-        ws.columns = [{ width: 26 }, { width: 22 }, { width: 20 }, { width: 28 }, { width: 16 }];
-        const newHires = employees.filter((e) => e.dateHired && inRange(e.dateHired, rangeStart, rangeEnd));
-        const headerRow = ws.addRow(["Employee Name", "Position", "Department", "Email", "Hired Date"]);
-        headerRow.eachCell((c) => {
-          c.font = { bold: true, color: { argb: "FFFFFFFF" } };
-          c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0E5E56" } };
-        });
-        newHires.forEach((e) =>
-          ws.addRow([e.name, e.position || "", e.department || "", e.realcognitaEmail || "", formatDate(e.dateHired!, "MMMM d, yyyy")])
-        );
-        ws.addRow([]);
-        const totalRow = ws.addRow([`Total: ${newHires.length}`]);
-        totalRow.getCell(1).font = { bold: true };
-      }
+      // One sheet for the selected range, named for its month: "September New Hires",
+      // titled "September 2026 New Hires".
+      const rangeStart = new Date(`${startDate}T00:00:00`);
+      const ws = wb.addWorksheet(`${format(rangeStart, "MMMM")} New Hires`);
+      ws.columns = [{ width: 8 }, { width: 30 }, { width: 24 }, { width: 22 }, { width: 20 }];
 
-      buildSheet("This Week", startOfWeekISO(today), endOfWeekISO(today));
-      buildSheet("This Month", startOfMonthISO(today), endOfMonthISO(today));
-      buildSheet("This Year", startOfYearISO(today), endOfYearISO(today));
+      const titleRow = ws.addRow([`${format(rangeStart, "MMMM yyyy")} New Hires`]);
+      ws.mergeCells(titleRow.number, 1, titleRow.number, 5);
+      titleRow.getCell(1).font = { bold: true, size: 13, color: { argb: "FF0A2E2A" } };
+      titleRow.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE4F0EE" } };
+      titleRow.getCell(1).alignment = { horizontal: "center", vertical: "middle" };
+
+      const headerRow = ws.addRow(["No.", "Employee Name", "Position", "Department", "Hired Date"]);
+      headerRow.eachCell((c) => {
+        c.font = { bold: true, color: { argb: "FFFFFFFF" } };
+        c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0E5E56" } };
+      });
+
+      const newHires = employees
+        .filter((e) => e.dateHired && inRange(e.dateHired, startDate, endDate))
+        .sort((a, b) => (a.dateHired! < b.dateHired! ? -1 : a.dateHired! > b.dateHired! ? 1 : 0));
+      // "No." is how many started on that same day, not a running count.
+      const hiredOnDay = new Map<string, number>();
+      newHires.forEach((e) => {
+        const day = e.dateHired!.slice(0, 10);
+        hiredOnDay.set(day, (hiredOnDay.get(day) || 0) + 1);
+      });
+      newHires.forEach((e) =>
+        ws.addRow([
+          hiredOnDay.get(e.dateHired!.slice(0, 10)) || 0,
+          e.name,
+          e.position || "",
+          e.department || "",
+          formatDate(e.dateHired!, "MMMM d, yyyy"),
+        ])
+      );
+      ws.addRow([]);
+      const totalRow = ws.addRow([`Total: ${newHires.length}`]);
+      totalRow.getCell(1).font = { bold: true };
+      for (let col = 1; col <= 5; col++) {
+        totalRow.getCell(col).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFFF00" } };
+      }
 
       const buffer = await wb.xlsx.writeBuffer();
       const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
@@ -1904,6 +1870,9 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
       const isThird = type === "third";
       const isSixth = type === "sixth";
       const isReliever = type === "relieverEnd";
+      const isBirthday = type === "birthday";
+      // Birthday and 6th Month sheets get the centred title and the yellow total.
+      const isFormatted = isSixth || isBirthday;
 
       /**
        * What each sheet is called inside: "October 2026 Regular Employees" for the 6th
@@ -1929,7 +1898,9 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
               "New Gross",
               "6th Month Date",
             ]
-          : [
+          : isBirthday
+            ? ["No.", "Employee Name", "Position", "Department", "Email", "Birthday", "Notes"]
+            : [
               "Employee Name",
               "Position",
               "Department",
@@ -1956,7 +1927,18 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
         return [NOT_SET_LABEL, ""];
       }
 
-      function rowFor(r: FilterRow): (string | number)[] {
+      function rowFor(r: FilterRow, index: number): (string | number)[] {
+        if (isBirthday) {
+          return [
+            index + 1,
+            r.name,
+            r.position,
+            r.department,
+            r.email,
+            formatDate(r.displayDate || r.date, "MMMM d, yyyy"),
+            noteFor(r.id, type),
+          ];
+        }
         if (isThird) {
           return [r.name, r.position, r.department, r.supervisor, formatDate(r.date, "MMMM d, yyyy")];
         }
@@ -1991,7 +1973,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
 
       function buildSheet(monthLabel: string, sheetName: string, sheetRows: FilterRow[]) {
         const ws = wb.addWorksheet(sheetName);
-        ws.columns = columns.map((c) => ({ width: c.length < 16 ? 22 : c.length + 6 }));
+        ws.columns = columns.map((c) => ({ width: c === "No." ? 8 : c.length < 16 ? 22 : c.length + 6 }));
 
         const titleRow = ws.addRow([sheetTitle(monthLabel)]);
         ws.mergeCells(titleRow.number, 1, titleRow.number, columns.length);
@@ -2001,7 +1983,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
           pattern: "solid",
           fgColor: { argb: "FFE4F0EE" },
         };
-        if (isSixth) titleRow.getCell(1).alignment = { horizontal: "center", vertical: "middle" };
+        if (isFormatted) titleRow.getCell(1).alignment = { horizontal: "center", vertical: "middle" };
 
         const headerRow = ws.addRow(columns);
         headerRow.eachCell((cell) => {
@@ -2009,13 +1991,33 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
           cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0E5E56" } };
         });
 
-        sheetRows.forEach((r) => ws.addRow(rowFor(r)));
+        sheetRows.forEach((r, i) => ws.addRow(rowFor(r, i)));
         ws.addRow([]);
         const totalRow = ws.addRow([`Total: ${sheetRows.length}`]);
         totalRow.getCell(1).font = { bold: true };
-        // The 6th-month total is what gets read off the sheet, so it is picked out in yellow.
-        if (isSixth) {
+        // The total is what gets read off the sheet, so it is picked out in yellow.
+        if (isFormatted) {
           totalRow.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFFF00" } };
+          if (isBirthday) {
+            totalRow.getCell(2).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFFF00" } };
+          }
+        }
+
+        // Beneath the total: the same people grouped under each birthday date.
+        if (isBirthday && sheetRows.length > 0) {
+          const byDay = new Map<string, FilterRow[]>();
+          sheetRows.forEach((r) => {
+            const day = formatDate(r.date, "MMMM dd");
+            byDay.set(day, [...(byDay.get(day) || []), r]);
+          });
+          byDay.forEach((people, day) => {
+            ws.addRow([]);
+            const dayRow = ws.addRow([`${day} (${people.length})`]);
+            ws.mergeCells(dayRow.number, 1, dayRow.number, 2);
+            dayRow.getCell(1).font = { bold: true, color: { argb: "FF0A2E2A" } };
+            dayRow.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE4F0EE" } };
+            people.forEach((p, i) => ws.addRow([i + 1, p.name]));
+          });
         }
       }
 
@@ -2123,7 +2125,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
         <div>
           <h2 className="font-display text-2xl text-ink">Advanced Filtering & Custom Views</h2>
           <p className="mt-1 text-sm text-ink-muted">
-            Filter by Milestones, Active, Resigned, or New Hires within a date range.
+            Filter by Milestones or New Hires within a date range.
           </p>
         </div>
         <span className={`text-ink-muted transition-transform ${expanded ? "rotate-90" : ""}`}>›</span>
@@ -2135,7 +2137,6 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
             <div className="flex flex-wrap gap-1 rounded-lg bg-background p-1 w-fit">
               {([
                 { id: "milestones" as const, label: "Milestones" },
-                { id: "activeResigned" as const, label: "Active/Resigned" },
                 { id: "newHires" as const, label: "New Hires" },
               ]).map((c) => (
                 <button
@@ -2219,101 +2220,6 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
             )}
           </div>
 
-          {category === "activeResigned" ? (
-            <>
-              <p className="mt-4 text-xs text-ink-muted">
-                Everyone on file, matching the count cards at the top of Employees. The date range above
-                applies to the milestone and new-hire views, not to these. New Hires are people whose
-                onboarding date is still ahead of them — they move into Active on their start date.
-                Resigned includes anyone with a COE for Resigned in the Centralized COE Tracker; a COE
-                with Purpose keeps an employee on the active list.
-              </p>
-
-              <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-3">
-                {(
-                  [
-                    { key: "active" as const, label: "Active Employees", rows: activeRows },
-                    { key: "newHires" as const, label: "New Hires", rows: newHireRows },
-                    { key: "resigned" as const, label: "Resigned Employees", rows: allResignedRows },
-                  ]
-                ).map((card) => (
-                  <StatCard
-                    key={card.key}
-                    value={card.rows.length}
-                    label={`${card.label} — Total Employees`}
-                    hint={openCountList === card.key ? "Hide list" : "View list"}
-                    active={openCountList === card.key}
-                    onClick={() => {
-                      setCountSearch("");
-                      setOpenCountList(openCountList === card.key ? null : card.key);
-                    }}
-                  />
-                ))}
-              </div>
-
-              {/* Shows at a glance whether the three buckets account for everyone on file. */}
-              <div className="mt-3 rounded-xl border border-border bg-background px-4 py-3 text-xs">
-                <span className="text-ink-muted">Headcount check: </span>
-                <span className="font-medium tabular-nums text-ink">
-                  {activeRows.length} active + {newHireRows.length} new hires + {resignedRows.length}{" "}
-                  resigned = {activeRows.length + newHireRows.length + resignedRows.length}
-                </span>
-                <span className="text-ink-muted"> of {roster.length} employees on file.</span>
-                {activeRows.length + newHireRows.length + resignedRows.length !== roster.length && (
-                  <span className="ml-1 font-medium text-warn">
-                    Mismatch of{" "}
-                    {Math.abs(
-                      roster.length - (activeRows.length + newHireRows.length + resignedRows.length)
-                    )}{" "}
-                    — every employee should land in exactly one bucket.
-                  </span>
-                )}
-                {excludedCount > 0 && (
-                  <span className="ml-1 text-ink-muted">
-                    {employees.length} records are on file; {excludedCount} (the admin account and
-                    any placeholder rows from a test import) {excludedCount === 1 ? "is" : "are"} not
-                    counted as staff.
-                  </span>
-                )}
-                {orphanResignedRows.length > 0 && (
-                  <span className="ml-1 text-ink-muted">
-                    Resigned also lists {orphanResignedRows.length} COE record
-                    {orphanResignedRows.length === 1 ? "" : "s"} whose employee is not on file, so that
-                    card reads {allResignedRows.length}.
-                  </span>
-                )}
-              </div>
-
-              {openCountList && (
-                <CountListPanel
-                  title={
-                    openCountList === "active"
-                      ? "Active Employees"
-                      : openCountList === "newHires"
-                        ? "New Hires"
-                        : "Resigned Employees"
-                  }
-                  kind={openCountList}
-                  rows={
-                    openCountList === "active"
-                      ? activeRows
-                      : openCountList === "newHires"
-                        ? newHireRows
-                        : allResignedRows
-                  }
-                  employees={employees}
-                  search={countSearch}
-                  onSearch={setCountSearch}
-                  onSeparationDateChange={(employeeId, day) =>
-                    updateEmployee(employeeId, {
-                      lastDay: day ? new Date(day).toISOString() : undefined,
-                      resignedStatus: day ? "resigned" : undefined,
-                    })
-                  }
-                />
-              )}
-            </>
-          ) : (
             <>
               {milestoneType === "sixth" && isMilestoneView && (
                 <div className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-background px-3 py-2">
@@ -2528,154 +2434,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                 </div>
               )}
             </>
-          )}
         </Card>
-      )}
-    </div>
-  );
-}
-
-
-/**
- * The list behind an Active / New Hires / Resigned count card. One component for all
- * three so the search, the Employee ID column and the row layout stay identical, and
- * only the trailing date column differs.
- */
-function CountListPanel({
-  title,
-  kind,
-  rows,
-  employees,
-  search,
-  onSearch,
-  onSeparationDateChange,
-}: {
-  title: string;
-  kind: "active" | "newHires" | "resigned";
-  rows: FilterRow[];
-  employees: Employee[];
-  search: string;
-  onSearch: (v: string) => void;
-  onSeparationDateChange: (employeeId: string, day: string) => void;
-}) {
-  const employeeId = (id: string) =>
-    employees.find((e) => e.id === id)?.companyIdNumber || "";
-
-  const term = search.trim().toLowerCase();
-  const visible = term
-    ? rows.filter((r) =>
-        [r.name, r.position, r.department, r.email, employeeId(r.id)].some((v) =>
-          (v || "").toLowerCase().includes(term)
-        )
-      )
-    : rows;
-
-  const dateHeading =
-    kind === "resigned"
-      ? "Separation Date"
-      : kind === "newHires"
-        ? "Onboarding Date"
-        : "Hired/Onboarding Date";
-
-  return (
-    <div className="mt-4">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm font-medium text-ink">
-          {title} — Total Employees: {visible.length}
-          {term ? ` of ${rows.length}` : ""}
-        </p>
-        <SearchInput
-          value={search}
-          onChange={onSearch}
-          placeholder="Search name, ID, position, department, email"
-          className="w-full sm:w-96"
-        />
-      </div>
-
-      {kind === "newHires" && (
-        <p className="mb-2 text-xs text-ink-muted">
-          Hired, with an onboarding date still ahead of them — they move into Active on their start
-          date, with no action needed here.
-        </p>
-      )}
-
-      {visible.length === 0 ? (
-        <EmptyState>
-          {term ? `No one matches “${search}”.` : `No ${title.toLowerCase()} on file.`}
-        </EmptyState>
-      ) : (
-        <TableWrap maxHeight="32rem">
-          <table className="w-full min-w-[900px] text-left text-sm">
-            <thead>
-              <tr className="bg-background text-xs uppercase tracking-wide text-ink-muted">
-                <th className="px-3 py-2">Employee ID</th>
-                <th className="px-3 py-2">Employee Name</th>
-                <th className="px-3 py-2">Position</th>
-                <th className="px-3 py-2">Department</th>
-                <th className="px-3 py-2">Email</th>
-                <th className="px-3 py-2">{dateHeading}</th>
-                {kind === "resigned" && <th className="px-3 py-2">Reason</th>}
-                {kind === "newHires" && <th className="px-3 py-2">Starts In</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {visible.map((r) => {
-                const orphan = r.id.startsWith("coe-");
-                return (
-                  <tr key={r.id} className="border-t border-border">
-                    <td className="px-3 py-2 text-ink-muted">{employeeId(r.id) || "—"}</td>
-                    <td className="px-3 py-2 text-ink">
-                      {orphan ? (
-                        r.name
-                      ) : (
-                        <Link href={`/employees/${r.id}`} className="hover:text-accent">
-                          {r.name}
-                        </Link>
-                      )}
-                    </td>
-                    <td className="px-3 py-2 text-ink-muted">{r.position || "—"}</td>
-                    <td className="px-3 py-2 text-ink-muted">{r.department || "—"}</td>
-                    <td className="px-3 py-2 text-ink-muted">{r.email || "—"}</td>
-                    <td className="px-3 py-2 text-ink-muted">
-                      {kind === "resigned" && !orphan ? (
-                        <div className="flex flex-col gap-0.5">
-                          <Input
-                            type="date"
-                            value={r.date ? r.date.slice(0, 10) : ""}
-                            onChange={(e) => onSeparationDateChange(r.id, e.target.value)}
-                            className="min-w-[150px]"
-                          />
-                          <span className="text-[11px] text-ink-muted">
-                            {r.date ? formatDate(r.date, "MMMM d, yyyy") : "No date on record"}
-                          </span>
-                        </div>
-                      ) : r.date ? (
-                        formatDate(r.date, "MMMM d, yyyy")
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                    {kind === "resigned" && (
-                      <td className="px-3 py-2 text-ink-muted">{r.reason || "—"}</td>
-                    )}
-                    {kind === "newHires" && (
-                      <td className="px-3 py-2">
-                        {(() => {
-                          const days = daysUntil(r.date);
-                          return (
-                            <Pill tone={days <= 7 ? "accent" : "neutral"}>
-                              {days <= 0 ? "Starting today" : days === 1 ? "1 day" : `${days} days`}
-                            </Pill>
-                          );
-                        })()}
-                      </td>
-                    )}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </TableWrap>
       )}
     </div>
   );
