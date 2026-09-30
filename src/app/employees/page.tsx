@@ -1798,44 +1798,72 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
       // titled "September 2026 New Hires".
       const rangeStart = new Date(`${startDate}T00:00:00`);
       const ws = wb.addWorksheet(`${format(rangeStart, "MMMM")} New Hires`);
-      ws.columns = [{ width: 8 }, { width: 30 }, { width: 24 }, { width: 22 }, { width: 20 }];
+      ws.columns = [{ width: 10 }, { width: 32 }, { width: 34 }, { width: 24 }, { width: 24 }];
+      const COLS = 5;
+      const solid = (argb: string) => ({ type: "pattern" as const, pattern: "solid" as const, fgColor: { argb } });
+      const edge = { style: "thin" as const, color: { argb: "FF1F2937" } };
 
       const titleRow = ws.addRow([`${format(rangeStart, "MMMM yyyy")} New Hires`]);
-      ws.mergeCells(titleRow.number, 1, titleRow.number, 5);
-      titleRow.getCell(1).font = { bold: true, size: 13, color: { argb: "FF0A2E2A" } };
-      titleRow.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE4F0EE" } };
+      ws.mergeCells(titleRow.number, 1, titleRow.number, COLS);
+      titleRow.height = 22;
+      titleRow.getCell(1).font = { bold: true, size: 13, color: { argb: "FF000000" } };
+      titleRow.getCell(1).fill = solid("FFEAF4F1");
       titleRow.getCell(1).alignment = { horizontal: "center", vertical: "middle" };
 
       const headerRow = ws.addRow(["No.", "Employee Name", "Position", "Department", "Hired Date"]);
-      headerRow.eachCell((c) => {
+      headerRow.height = 20;
+      headerRow.eachCell((c, col) => {
         c.font = { bold: true, color: { argb: "FFFFFFFF" } };
-        c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0E5E56" } };
+        c.fill = solid("FF0E5E56");
+        c.alignment = { horizontal: col === 1 ? "center" : "left", vertical: "middle" };
       });
 
       const newHires = employees
         .filter((e) => e.dateHired && inRange(e.dateHired, startDate, endDate))
         .sort((a, b) => (a.dateHired! < b.dateHired! ? -1 : a.dateHired! > b.dateHired! ? 1 : 0));
-      // "No." is how many started on that same day, not a running count.
-      const hiredOnDay = new Map<string, number>();
+
+      // Everyone hired on the same day forms one block: "No." (how many started that
+      // day) merged down its left, the block shaded as one, alternating two blues and
+      // boxed off from the next day's.
+      const byDay = new Map<string, Employee[]>();
       newHires.forEach((e) => {
         const day = e.dateHired!.slice(0, 10);
-        hiredOnDay.set(day, (hiredOnDay.get(day) || 0) + 1);
+        byDay.set(day, [...(byDay.get(day) || []), e]);
       });
-      newHires.forEach((e) =>
-        ws.addRow([
-          hiredOnDay.get(e.dateHired!.slice(0, 10)) || 0,
-          e.name,
-          e.position || "",
-          e.department || "",
-          formatDate(e.dateHired!, "MMMM d, yyyy"),
-        ])
-      );
+      [...byDay.values()].forEach((group, g) => {
+        const shade = solid(g % 2 === 0 ? "FFDCE6F1" : "FFC5D9F1");
+        const first = ws.rowCount + 1;
+        group.forEach((e, i) => {
+          const row = ws.addRow([
+            i === 0 ? group.length : "",
+            e.name,
+            e.position || "",
+            e.department || "",
+            formatDate(e.dateHired!, "MMMM d, yyyy"),
+          ]);
+          for (let col = 1; col <= COLS; col++) {
+            const cell = row.getCell(col);
+            cell.fill = shade;
+            cell.alignment = { vertical: "middle" };
+            cell.border = {
+              left: col === 1 || col === 2 ? edge : undefined,
+              right: col === 1 || col === COLS ? edge : undefined,
+              top: i === 0 ? edge : undefined,
+              bottom: i === group.length - 1 ? edge : undefined,
+            };
+          }
+        });
+        const last = ws.rowCount;
+        if (last > first) ws.mergeCells(first, 1, last, 1);
+        const count = ws.getCell(first, 1);
+        count.font = { bold: true, size: 12 };
+        count.alignment = { horizontal: "center", vertical: "middle" };
+      });
+
       ws.addRow([]);
       const totalRow = ws.addRow([`Total: ${newHires.length}`]);
       totalRow.getCell(1).font = { bold: true };
-      for (let col = 1; col <= 5; col++) {
-        totalRow.getCell(col).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFFF00" } };
-      }
+      totalRow.getCell(1).fill = solid("FFFFFF00");
 
       const buffer = await wb.xlsx.writeBuffer();
       const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
