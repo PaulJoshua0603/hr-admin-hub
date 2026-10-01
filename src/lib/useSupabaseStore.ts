@@ -131,6 +131,7 @@ export function __resetStores() {
   loadedAt.clear();
   inflight.clear();
   offlineKeys.clear();
+  lastSaved.clear();
 }
 
 /**
@@ -167,6 +168,189 @@ function markLoaded(key: string) {
   subscribers.get(key)?.forEach((fn) => fn());
 }
 
+/**
+ * A big list goes to Supabase gzipped. The employee list is close to 2 MB of JSON — the
+ * same checklist wording and field names repeated for every employee — and every save
+ * rewrote, and every load downloaded, all of it. Gzipped it is a fraction of that, which
+ * is what keeps the project inside the free plan's disk and egress budgets.
+ *
+ * Reading accepts either form, so rows saved before this existed still load, and a value
+ * that does not shrink (an uploaded Word template is already compressed) is stored as is.
+ */
+const PACK_THRESHOLD = 64 * 1024;
+type Packed = { packed: "gzip-base64"; data: string };
+
+function isPacked(value: unknown): value is Packed {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    (value as Packed).packed === "gzip-base64" &&
+    typeof (value as Packed).data === "string"
+  );
+}
+
+async function gzipBase64(text: string): Promise<string | null> {
+  if (typeof CompressionStream === "undefined") return null;
+  const stream = new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"));
+  const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(binary);
+}
+
+async function gunzipBase64(data: string): Promise<string> {
+  const binary = atob(data);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+  return new Response(stream).text();
+}
+
+async function toStored(json: string, list: unknown[]): Promise<unknown> {
+  if (json.length < PACK_THRESHOLD) return list;
+  const data = await gzipBase64(json);
+  if (!data || data.length > json.length * 0.7) return list;
+  return { packed: "gzip-base64", data } satisfies Packed;
+}
+
+async function fromStored<T>(value: unknown): Promise<T[] | null> {
+  if (isPacked(value)) return JSON.parse(await gunzipBase64(value.data)) as T[];
+  return Array.isArray(value) ? (value as T[]) : null;
+}
+
+/** The JSON last known to be in Supabase per key, so a save that changes nothing is skipped. */
+const lastSaved = new Map<string, string>();
+
+/** One key, straight from Supabase — or, if that fails, from the local mirror. */
+async function fetchStoreValue<T>(key: string): Promise<T[] | null> {
+  if (!supabaseReady) {
+    try {
+      const raw = window.localStorage.getItem(key);
+      return raw ? (JSON.parse(raw) as T[]) : null;
+    } catch {
+      return null;
+    }
+  }
+  try {
+    const { data, error } = await supabase
+      .from("app_store")
+      .select("value")
+      .eq("key", key)
+      .maybeSingle();
+    if (error) throw error;
+    setOffline(key, false);
+    // No row yet is a legitimate empty state, not a failure — nothing to publish.
+    const value = await fromStored<T>(data?.value);
+    if (value) lastSaved.set(key, JSON.stringify(value));
+    return value;
+  } catch {
+    // The request itself failed — a dropped connection, or Supabase refusing traffic
+    // once a quota is spent. Whatever was last seen for this key, in this tab or a
+    // previous one, is better than showing nothing at all.
+    setOffline(key, true);
+    return readMirror<T>(key);
+  }
+}
+
+/**
+ * Loads a key into the shared cache for code outside a component (the notification bell,
+ * the employee name picker), so they reuse the copy the page already has instead of
+ * downloading their own.
+ */
+export async function loadStore<T>(key: string, force = false): Promise<T[]> {
+  await ensureLoaded(key, () => fetchStoreValue<T>(key), force);
+  return getStoreSnapshot<T>(key);
+}
+
+/** Subscribes to a key's shared value outside the hook; returns the unsubscribe. */
+export function subscribeStore(key: string, onChange: () => void): () => void {
+  let set = subscribers.get(key);
+  if (!set) {
+    set = new Set();
+    subscribers.set(key, set);
+  }
+  set.add(onChange);
+  return () => {
+    set?.delete(onChange);
+  };
+}
+
+/**
+ * How long after the last change a key is written back. Typing in a field used to save
+ * the whole employee list once per keystroke; now a burst of edits is one save.
+ */
+export const SAVE_DELAY_MS = 1200;
+const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const saveChains = new Map<string, Promise<void>>();
+const saveWaiters = new Map<string, Array<() => void>>();
+
+async function writeNow(key: string) {
+  const list = caches.get(key) ?? [];
+  const json = JSON.stringify(list);
+  if (lastSaved.get(key) === json) return;
+  try {
+    const value = await toStored(json, list);
+    const { error } = await supabase
+      .from("app_store")
+      .upsert({ key, value, updated_at: new Date().toISOString() });
+    if (error) throw error;
+    lastSaved.set(key, json);
+    setOffline(key, false);
+    // The cache now holds exactly what the source holds, so nothing needs re-reading.
+    loadedAt.set(key, Date.now());
+  } catch {
+    // The change is already visible locally and mirrored to localStorage, so nothing is
+    // lost from under the user — but it has not reached Supabase, and the offline banner
+    // is what tells them that. The next save of this key carries it along.
+    setOffline(key, true);
+  }
+}
+
+/** Writes a key now, after any save of it already on the wire, so saves land in order. */
+function flushKey(key: string): Promise<void> {
+  const timer = saveTimers.get(key);
+  if (timer) clearTimeout(timer);
+  saveTimers.delete(key);
+  const waiters = saveWaiters.get(key) ?? [];
+  saveWaiters.delete(key);
+  const chain = (saveChains.get(key) ?? Promise.resolve()).then(() => writeNow(key));
+  saveChains.set(key, chain);
+  void chain.finally(() => {
+    if (saveChains.get(key) === chain) saveChains.delete(key);
+    waiters.forEach((done) => done());
+  });
+  return chain;
+}
+
+function scheduleSave(key: string): Promise<void> {
+  const existing = saveTimers.get(key);
+  if (existing) clearTimeout(existing);
+  saveTimers.set(key, setTimeout(() => void flushKey(key), SAVE_DELAY_MS));
+  return new Promise((resolve) => {
+    saveWaiters.set(key, [...(saveWaiters.get(key) ?? []), resolve]);
+  });
+}
+
+/** Sends every pending save straight away. */
+export function flushPendingSaves(): Promise<void> {
+  return Promise.all([...saveTimers.keys()].map(flushKey)).then(() => undefined);
+}
+
+if (typeof window !== "undefined") {
+  // Leaving the tab sends whatever is still waiting; closing it inside the save delay
+  // asks first, so a last edit is never dropped without a word.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") void flushPendingSaves();
+  });
+  window.addEventListener("beforeunload", (event) => {
+    if (saveTimers.size === 0 && saveChains.size === 0) return;
+    void flushPendingSaves();
+    event.preventDefault();
+  });
+}
+
 export function useSupabaseStore<T extends { id: string }>(
   key: string,
   initial: T[] = [],
@@ -185,20 +369,7 @@ export function useSupabaseStore<T extends { id: string }>(
   // Captured once so the snapshot getter stays stable across renders.
   const [seed] = useState(initial);
 
-  const subscribe = useCallback(
-    (onChange: () => void) => {
-      let set = subscribers.get(key);
-      if (!set) {
-        set = new Set();
-        subscribers.set(key, set);
-      }
-      set.add(onChange);
-      return () => {
-        set?.delete(onChange);
-      };
-    },
-    [key]
-  );
+  const subscribe = useCallback((onChange: () => void) => subscribeStore(key, onChange), [key]);
 
   const getSnapshot = useCallback(() => cacheFor<T>(key, seed), [key, seed]);
 
@@ -207,38 +378,7 @@ export function useSupabaseStore<T extends { id: string }>(
   const hydrated = useSyncExternalStore(subscribe, isLoaded, () => false);
 
   const load = useCallback(
-    (force = false) =>
-      ensureLoaded(
-        key,
-        async () => {
-          if (!supabaseReady) {
-            try {
-              const raw = window.localStorage.getItem(key);
-              return raw ? (JSON.parse(raw) as T[]) : null;
-            } catch {
-              return null;
-            }
-          }
-          try {
-            const { data, error } = await supabase
-              .from("app_store")
-              .select("value")
-              .eq("key", key)
-              .maybeSingle();
-            if (error) throw error;
-            setOffline(key, false);
-            // No row yet is a legitimate empty state, not a failure — nothing to publish.
-            return data?.value ? (data.value as T[]) : null;
-          } catch {
-            // The request itself failed — a dropped connection, or Supabase refusing
-            // traffic once an egress quota is spent. Whatever was last seen for this key,
-            // in this tab or a previous one, is better than showing nothing at all.
-            setOffline(key, true);
-            return readMirror<T>(key);
-          }
-        },
-        force
-      ),
+    (force = false) => ensureLoaded(key, () => fetchStoreValue<T>(key), force),
     [key]
   );
 
@@ -254,7 +394,8 @@ export function useSupabaseStore<T extends { id: string }>(
   const reload = useCallback(() => load(true), [load]);
 
   const persist = useCallback(
-    async (next: T[]) => {
+    (next: T[]): Promise<void> => {
+      // Shown everywhere at once; the write to Supabase follows once the edits pause.
       publish(key, next);
       if (!supabaseReady) {
         try {
@@ -262,22 +403,9 @@ export function useSupabaseStore<T extends { id: string }>(
         } catch {
           // ignore
         }
-        return;
+        return Promise.resolve();
       }
-      try {
-        const { error } = await supabase
-          .from("app_store")
-          .upsert({ key, value: next, updated_at: new Date().toISOString() });
-        if (error) throw error;
-        setOffline(key, false);
-        // The cache now holds exactly what the source holds, so nothing needs re-reading.
-        loadedAt.set(key, Date.now());
-      } catch {
-        // The change is already visible locally (published above) and mirrored to
-        // localStorage, so nothing is lost from under the user — but it has not actually
-        // reached Supabase, and the offline banner is what tells them that.
-        setOffline(key, true);
-      }
+      return scheduleSave(key);
     },
     [key]
   );

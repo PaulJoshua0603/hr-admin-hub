@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Employee, Task } from "@/types";
 import { isOverdue, isDueToday, formatDate } from "@/lib/dates";
-import { supabase, supabaseReady } from "@/lib/supabaseClient";
+import { loadStore, subscribeStore } from "@/lib/useSupabaseStore";
 import { useNotifications } from "@/lib/notificationContext";
 import { computeEmployeeAlerts } from "@/lib/employeeAlerts";
 
@@ -16,26 +16,16 @@ type Alert = {
   href: string;
 };
 
-async function readValue<T>(key: string): Promise<T[]> {
-  if (!supabaseReady) {
-    try {
-      return JSON.parse(window.localStorage.getItem(key) || "[]");
-    } catch {
-      return [];
-    }
-  }
-  const { data } = await supabase
-    .from("app_store")
-    .select("value")
-    .eq("key", key)
-    .maybeSingle();
-  return (data?.value as T[]) || [];
-}
-
+/**
+ * Built from the same in-memory copy every page uses. This used to download the whole
+ * employee list from Supabase every minute and on every window focus, on every page —
+ * most of the project's disk and egress use. Edits made in the app update that copy
+ * directly, so the alerts follow them without asking Supabase again.
+ */
 async function readAlerts(): Promise<Alert[]> {
   const alerts: Alert[] = [];
 
-  const tasks = await readValue<Task>("hr_tasks");
+  const tasks = await loadStore<Task>("hr_tasks");
   for (const t of tasks) {
     if (t.accomplished || !t.deadline) continue;
     if (isOverdue(t.deadline)) {
@@ -57,7 +47,7 @@ async function readAlerts(): Promise<Alert[]> {
     }
   }
 
-  const employees = await readValue<Employee>("hr_employees");
+  const employees = await loadStore<Employee>("hr_employees");
   alerts.push(...computeEmployeeAlerts(employees));
 
   return alerts;
@@ -83,12 +73,17 @@ export default function NotificationBell() {
   const prevCountRef = useRef<number | null>(null);
 
   useEffect(() => {
-    readAlerts().then(setAlerts);
-    const onFocus = () => readAlerts().then(setAlerts);
-    window.addEventListener("focus", onFocus);
-    const interval = setInterval(() => readAlerts().then(setAlerts), 60_000);
+    const refresh = () => void readAlerts().then(setAlerts);
+    refresh();
+    const unsubscribe = [
+      subscribeStore("hr_tasks", refresh),
+      subscribeStore("hr_employees", refresh),
+    ];
+    // Still re-checked each minute for "due today" turning into "overdue", but from
+    // memory — no request goes out.
+    const interval = setInterval(refresh, 60_000);
     return () => {
-      window.removeEventListener("focus", onFocus);
+      unsubscribe.forEach((off) => off());
       clearInterval(interval);
     };
   }, []);

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { supabase, supabaseReady } from "@/lib/supabaseClient";
+import { getStoreSnapshot, loadStore, subscribeStore } from "@/lib/useSupabaseStore";
 import type { Employee } from "@/types";
 
 export type DirectoryEntry = {
@@ -15,15 +15,6 @@ export type DirectoryEntry = {
 };
 
 const STORE_KEY = "hr_employees";
-
-/**
- * Read-only, process-wide cached view of the employee list. Several name inputs can
- * be mounted at once (one per report form, one per row being edited), so the fetch is
- * shared instead of each input pulling the whole employee table again.
- */
-let cache: DirectoryEntry[] | null = null;
-let inflight: Promise<DirectoryEntry[]> | null = null;
-const listeners = new Set<(entries: DirectoryEntry[]) => void>();
 
 function toEntries(employees: Employee[]): DirectoryEntry[] {
   return employees
@@ -39,56 +30,30 @@ function toEntries(employees: Employee[]): DirectoryEntry[] {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-async function fetchDirectory(): Promise<DirectoryEntry[]> {
-  if (!supabaseReady) {
-    try {
-      const raw = window.localStorage.getItem(STORE_KEY);
-      return raw ? toEntries(JSON.parse(raw) as Employee[]) : [];
-    } catch {
-      return [];
-    }
-  }
-  const { data, error } = await supabase
-    .from("app_store")
-    .select("value")
-    .eq("key", STORE_KEY)
-    .maybeSingle();
-  if (error || !data?.value) return [];
-  return toEntries(data.value as Employee[]);
-}
-
-function load(force = false): Promise<DirectoryEntry[]> {
-  if (!force && cache) return Promise.resolve(cache);
-  if (!force && inflight) return inflight;
-  inflight = fetchDirectory()
-    .then((entries) => {
-      cache = entries;
-      listeners.forEach((l) => l(entries));
-      return entries;
-    })
-    .finally(() => {
-      inflight = null;
-    });
-  return inflight;
-}
-
+/** Re-reads the employee list from Supabase (subject to the store's freshness window). */
 export function refreshEmployeeDirectory() {
-  return load(true);
+  return loadStore<Employee>(STORE_KEY, true).then(toEntries);
 }
 
+/**
+ * Read-only view of the employee list for the name pickers. It shares the one in-memory
+ * copy the rest of the app uses — it used to download its own — and follows edits to it.
+ */
 export function useEmployeeDirectory() {
-  const [entries, setEntries] = useState<DirectoryEntry[]>(cache || []);
+  const [entries, setEntries] = useState<DirectoryEntry[]>(() =>
+    toEntries(getStoreSnapshot<Employee>(STORE_KEY))
+  );
 
   useEffect(() => {
     let alive = true;
-    const listener = (next: DirectoryEntry[]) => {
-      if (alive) setEntries(next);
+    const sync = () => {
+      if (alive) setEntries(toEntries(getStoreSnapshot<Employee>(STORE_KEY)));
     };
-    listeners.add(listener);
-    load().then(listener);
+    const unsubscribe = subscribeStore(STORE_KEY, sync);
+    void loadStore<Employee>(STORE_KEY).then(sync);
     return () => {
       alive = false;
-      listeners.delete(listener);
+      unsubscribe();
     };
   }, []);
 
