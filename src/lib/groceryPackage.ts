@@ -167,13 +167,31 @@ export function teamForDepartment(department: string): GroceryTeam | null {
 const TEAM_BY_NAME = new Map(GROCERY_TEAMS.map((t) => [t.team, t]));
 
 /**
+ * Employees the October 2026 attendance sheet puts on a team their department does not
+ * map to, keyed by employee record id. Checked against the whole sheet: these were the
+ * only two whose team in the system differed from it.
+ */
+const ATTENDANCE_SHEET_TEAMS: Record<string, string> = {
+  // Phryncess Mhary S. Cacal (240104), department Struc 2
+  "014b01ec-29d8-4c2e-90da-4f7d6f43d0f8": "Team Atlas Pre-Cast",
+  // Ryan Jay M. Estolano (260911), department AES
+  "c70520d9-7cf2-41c3-9bcc-8898f484336c": "Team Atlas Pre-Cast",
+};
+
+/** The team someone is on unless picked by hand: the attendance sheet's, else their department's. */
+export function defaultTeamOf(e: Employee): GroceryTeam | null {
+  const fromSheet = ATTENDANCE_SHEET_TEAMS[e.id];
+  return (fromSheet && TEAM_BY_NAME.get(fromSheet)) || teamForDepartment(departmentOf(e));
+}
+
+/**
  * An employee's team: the one HR picked for them (Employee details or Grocery Package),
- * otherwise the one their department maps to — so someone just added lands on a team
- * straight away, and a department change moves them unless they were placed by hand.
+ * otherwise their default — so someone just added lands on a team straight away, and a
+ * department change moves them unless they were placed by hand.
  */
 export function teamOf(e: Employee): GroceryTeam | null {
   const chosen = e.team ? TEAM_BY_NAME.get(e.team) : undefined;
-  return chosen ?? teamForDepartment(departmentOf(e));
+  return chosen ?? defaultTeamOf(e);
 }
 
 /** Last name, first name and middle initial, preferring what Employee details holds. */

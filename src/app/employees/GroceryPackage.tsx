@@ -23,12 +23,12 @@ import {
   grocerySheets,
   teamClientMap,
   teamCounts,
-  teamForDepartment,
   teamOf,
+  defaultTeamOf,
 } from "@/lib/groceryPackage";
 
 /**
- * Team choice for one employee: "From department" follows their department's team (and
+ * Team choice for one employee: "Default" follows the attendance sheet or their department (and
  * keeps following it if the department changes); any other choice pins them to that team.
  * Shared by Grocery Package and Employee details so both offer exactly the same list.
  */
@@ -47,7 +47,7 @@ export function TeamPicker({
   disabled?: boolean;
   className?: string;
 }) {
-  const fromDepartment = teamForDepartment(departmentOf(employee))?.team;
+  const fallback = defaultTeamOf(employee)?.team;
   return (
     <select
       value={employee.team && GROCERY_TEAMS.some((t) => t.team === employee.team) ? employee.team : ""}
@@ -60,7 +60,7 @@ export function TeamPicker({
       }}
       className={`w-full rounded-md border border-border bg-surface px-2 py-1 text-sm text-ink outline-none focus:border-accent disabled:cursor-not-allowed disabled:opacity-60 ${className}`}
     >
-      <option value="">From department ({fromDepartment || "no team"})</option>
+      <option value="">Default ({fallback || "no team"})</option>
       {[...GROCERY_TEAMS]
         .sort((a, b) => compareText(a.team, b.team))
         .map((t) => (
@@ -496,7 +496,7 @@ export default function GroceryPackage({
                               updateEmployee(e.id, { team: value || undefined });
                               setEditingTeamFor(null);
                               notify(
-                                `${e.name}: ${value || `team from department (${teamForDepartment(departmentOf(e))?.team || "none"})`}`,
+                                `${e.name}: ${value || `default team (${defaultTeamOf(e)?.team || "none"})`}`,
                                 "created"
                               );
                             }}
