@@ -64,6 +64,7 @@ import {
 } from "@/lib/milestoneNotes";
 import { EmployeeNameInput } from "@/components/EmployeeNameInput";
 import { employeeNameParts } from "@/lib/employeeNamePdf";
+import GroceryPackage from "./GroceryPackage";
 import {
   buildThirdMonthEvaluationDocx,
   thirdMonthEvaluationFileName,
@@ -1481,6 +1482,8 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
   const [expanded, setExpanded] = useState(false);
   const [category, setCategory] = useState<FilterCategory>("milestones");
   const [milestoneType, setMilestoneType] = useState<MilestoneType>("birthday");
+  // Grocery Package sits beside the milestone tabs but is not a dated milestone.
+  const [showGrocery, setShowGrocery] = useState(false);
   const today = new Date();
   const [preset, setPreset] = useState<TimeframePreset>("month");
   const [startDate, setStartDate] = useState(startOfMonthISO(today));
@@ -1746,6 +1749,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
   })().sort((a, b) => (a.date < b.date ? -1 : 1));
 
   const isMilestoneView = category === "milestones";
+  const groceryView = isMilestoneView && showGrocery;
   const isRelieverView = isMilestoneView && milestoneType === "relieverEnd";
   const dateColumnLabel =
     category === "newHires"
@@ -2190,18 +2194,35 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                 ]).map((m) => (
                   <button
                     key={m.id}
-                    onClick={() => setMilestoneType(m.id)}
+                    onClick={() => {
+                      setShowGrocery(false);
+                      setMilestoneType(m.id);
+                    }}
                     className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                      milestoneType === m.id ? "bg-surface text-accent shadow-sm" : "text-ink-muted hover:text-ink"
+                      !showGrocery && milestoneType === m.id
+                        ? "bg-surface text-accent shadow-sm"
+                        : "text-ink-muted hover:text-ink"
                     }`}
                   >
                     {m.label}
                   </button>
                 ))}
+                <button
+                  onClick={() => setShowGrocery(true)}
+                  className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                    showGrocery ? "bg-surface text-accent shadow-sm" : "text-ink-muted hover:text-ink"
+                  }`}
+                >
+                  Grocery Package
+                </button>
               </div>
             )}
           </div>
 
+          {groceryView ? (
+            <GroceryPackage employees={employees} coeIndex={coeIndex} />
+          ) : (
+            <>
           <div className="mt-3 flex flex-wrap items-end gap-3">
             <label className="flex flex-col gap-1 text-xs text-ink-muted">
               Start date
@@ -2462,6 +2483,8 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                 </div>
               )}
             </>
+            </>
+          )}
         </Card>
       )}
     </div>
