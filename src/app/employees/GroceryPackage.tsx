@@ -22,7 +22,53 @@ import {
   teamClientMap,
   teamCounts,
   teamForDepartment,
+  teamOf,
 } from "@/lib/groceryPackage";
+
+/**
+ * Team choice for one employee: "From department" follows their department's team (and
+ * keeps following it if the department changes); any other choice pins them to that team.
+ * Shared by Grocery Package and Employee details so both offer exactly the same list.
+ */
+export function TeamPicker({
+  employee,
+  onPick,
+  onClose,
+  autoFocus,
+  disabled,
+  className = "",
+}: {
+  employee: Employee;
+  onPick: (team: string) => void;
+  onClose?: () => void;
+  autoFocus?: boolean;
+  disabled?: boolean;
+  className?: string;
+}) {
+  const fromDepartment = teamForDepartment(departmentOf(employee))?.team;
+  return (
+    <select
+      value={employee.team && GROCERY_TEAMS.some((t) => t.team === employee.team) ? employee.team : ""}
+      autoFocus={autoFocus}
+      disabled={disabled}
+      onChange={(ev) => onPick(ev.target.value)}
+      onBlur={onClose}
+      onKeyDown={(ev) => {
+        if (ev.key === "Escape") onClose?.();
+      }}
+      className={`w-full rounded-md border border-border bg-surface px-2 py-1 text-sm text-ink outline-none focus:border-accent disabled:cursor-not-allowed disabled:opacity-60 ${className}`}
+    >
+      <option value="">From department ({fromDepartment || "no team"})</option>
+      {[...GROCERY_TEAMS]
+        .sort((a, b) => compareText(a.team, b.team))
+        .map((t) => (
+          <option key={t.team} value={t.team}>
+            {t.team}
+          </option>
+        ))}
+    </select>
+  );
+}
 
 const ALL = "__all__";
 
@@ -53,6 +99,9 @@ export default function GroceryPackage({
     []
   );
   const clients = useMemo(() => teamClientMap(savedClients), [savedClients]);
+  // Same shared copy the Employees pages edit, so a team changed here shows there at once.
+  const { update: updateEmployee } = useSupabaseStore<Employee>("hr_employees", []);
+  const [editingTeamFor, setEditingTeamFor] = useState<string | null>(null);
   const [client, setClient] = useState(ALL);
   const [team, setTeam] = useState(ALL);
   const [department, setDepartment] = useState(ALL);
@@ -403,11 +452,42 @@ export default function GroceryPackage({
                     <tr key={e.id} className="border-t border-border">
                       <td className="px-3 py-2 text-center tabular-nums text-ink-muted">{i + 1}</td>
                       <td className="px-3 py-2 tabular-nums text-ink-muted">{e.companyIdNumber || "—"}</td>
-                      <td className="px-3 py-2 text-ink">{groceryFullName(e)}</td>
+                      <td className="px-3 py-2">
+                        <button
+                          onClick={() => setEditingTeamFor(editingTeamFor === e.id ? null : e.id)}
+                          className="text-left text-ink hover:text-accent hover:underline"
+                          title="Change this employee's team"
+                        >
+                          {groceryFullName(e)}
+                        </button>
+                      </td>
                       <td className="px-3 py-2 text-ink-muted">{e.position || ""}</td>
                       <td className="px-3 py-2 text-ink-muted">{departmentOf(e)}</td>
                       <td className="px-3 py-2 text-ink-muted">
-                        {teamForDepartment(departmentOf(e))?.team || "—"}
+                        {editingTeamFor === e.id ? (
+                          <TeamPicker
+                            employee={e}
+                            autoFocus
+                            onPick={(value) => {
+                              updateEmployee(e.id, { team: value || undefined });
+                              setEditingTeamFor(null);
+                              notify(
+                                `${e.name}: ${value || `team from department (${teamForDepartment(departmentOf(e))?.team || "none"})`}`,
+                                "created"
+                              );
+                            }}
+                            onClose={() => setEditingTeamFor(null)}
+                          />
+                        ) : (
+                          <span>
+                            {teamOf(e)?.team || "—"}
+                            {e.team && teamOf(e)?.team === e.team && (
+                              <span className="ml-1 text-[10px] uppercase text-accent" title="Set by hand">
+                                set
+                              </span>
+                            )}
+                          </span>
+                        )}
                       </td>
                       <td className="px-3 py-2 text-ink-muted">{clientOf(e, clients)}</td>
                     </tr>

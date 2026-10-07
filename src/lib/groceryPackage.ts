@@ -107,7 +107,7 @@ export const NO_CLIENT = "No client set";
  * for someone whose department has no team, the Client typed on their own record.
  */
 export function clientOf(e: Employee, clients: Map<string, string>): string {
-  const team = teamForDepartment(departmentOf(e));
+  const team = teamOf(e);
   const fromTeam = team ? clients.get(team.team) : "";
   return fromTeam || (e.client || "").trim() || NO_CLIENT;
 }
@@ -127,6 +127,18 @@ export function departmentOf(e: Employee): string {
 /** The team a department belongs to, or null for one not in the list above. */
 export function teamForDepartment(department: string): GroceryTeam | null {
   return TEAM_BY_DEPARTMENT.get(normalize(department)) ?? null;
+}
+
+const TEAM_BY_NAME = new Map(GROCERY_TEAMS.map((t) => [t.team, t]));
+
+/**
+ * An employee's team: the one HR picked for them (Employee details or Grocery Package),
+ * otherwise the one their department maps to — so someone just added lands on a team
+ * straight away, and a department change moves them unless they were placed by hand.
+ */
+export function teamOf(e: Employee): GroceryTeam | null {
+  const chosen = e.team ? TEAM_BY_NAME.get(e.team) : undefined;
+  return chosen ?? teamForDepartment(departmentOf(e));
 }
 
 /** Last name, first name and middle initial, preferring what Employee details holds. */
@@ -167,7 +179,7 @@ export function compareText(a: string, b: string): number {
 /** Which count row an employee falls under: their team, or their department if it has none. */
 export function groupKeyOf(e: Employee): string {
   const department = departmentOf(e);
-  const team = teamForDepartment(department);
+  const team = teamOf(e);
   return team ? `team:${team.team}` : `dept:${normalize(department)}`;
 }
 
@@ -193,7 +205,7 @@ export function teamCounts(employees: Employee[], clients: Map<string, string>):
       row = {
         key,
         departments: [],
-        team: teamForDepartment(department)?.team || "",
+        team: teamOf(e)?.team || "",
         client: clientOf(e, clients),
         count: 0,
       };
@@ -241,7 +253,7 @@ export function grocerySheets(employees: Employee[], reserved: string[] = []): G
   const groups = new Map<string, Omit<GrocerySheet, "sheet"> & { sheetName: string }>();
   employees.forEach((e) => {
     const department = departmentOf(e);
-    const team = teamForDepartment(department);
+    const team = teamOf(e);
     const key = groupKeyOf(e);
     let group = groups.get(key);
     if (!group) {

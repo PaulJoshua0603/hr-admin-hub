@@ -11,10 +11,10 @@ import { formatPhilHealthInput } from "@/lib/er2Fields";
 import {
   TEAM_CLIENTS_KEY,
   type TeamClient,
-  departmentOf,
   teamClientMap,
-  teamForDepartment,
+  teamOf,
 } from "@/lib/groceryPackage";
+import { TeamPicker } from "../GroceryPackage";
 import { useNotifications } from "@/lib/notificationContext";
 import { addDaysISO, addMonthsISO, daysSince, formatDate, isOverdue, nextMondayISO, todayISO } from "@/lib/dates";
 import {
@@ -95,7 +95,7 @@ export default function EmployeeDetailPage({
   // The client comes from the team (Grocery Package → Set Team → Client), so everyone on a
   // team shows the same one; only someone whose department has no team keeps their own.
   const { items: teamClients } = useSupabaseStore<TeamClient>(TEAM_CLIENTS_KEY, []);
-  const employeeTeam = employee ? teamForDepartment(departmentOf(employee)) : null;
+  const employeeTeam = employee ? teamOf(employee) : null;
   const teamClient = employeeTeam ? teamClientMap(teamClients).get(employeeTeam.team) || "" : "";
   const [birthdayInput, setBirthdayInput] = useState(
     employee?.birthday ? employee.birthday.slice(0, 10) : ""
@@ -699,7 +699,12 @@ export default function EmployeeDetailPage({
             )}
           </FieldGroup>
           <FieldGroup label="Team">
-            <Input value={employeeTeam?.team || "No team for this department"} disabled />
+            <TeamPicker
+              employee={employee}
+              disabled={!isEditing}
+              className="py-2"
+              onPick={(value) => update(employee.id, { team: value || undefined })}
+            />
           </FieldGroup>
           <FieldGroup label="Applicant Type">
             <select

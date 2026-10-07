@@ -600,6 +600,8 @@ export type Employee = {
   workingHours?: string;
   /** The client account the employee is placed on. */
   client?: string;
+  /** Grocery Package team, when HR has moved them off the one their department maps to. */
+  team?: string;
   /** Whether they were hired as a new applicant or as someone's replacement. */
   applicantType?: "new" | "replacement";
   costCenter?: string;
