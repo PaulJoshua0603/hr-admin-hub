@@ -125,22 +125,35 @@ export function compareText(a: string, b: string): number {
   return collator.compare(a, b);
 }
 
-export type GroceryDepartmentCount = { department: string; team: string; count: number };
+/** Which count row an employee falls under: their team, or their department if it has none. */
+export function groupKeyOf(e: Employee): string {
+  const department = departmentOf(e);
+  const team = teamForDepartment(department);
+  return team ? `team:${team.team}` : `dept:${normalize(department)}`;
+}
 
-/** One row per department present, alphabetical, with its team. */
-export function departmentCounts(employees: Employee[]): GroceryDepartmentCount[] {
-  const counts = new Map<string, number>();
+export type GroceryTeamCount = { key: string; departments: string[]; team: string; count: number };
+
+/**
+ * One row per team — Team Finance is one row however many of its departments have
+ * people — and one per department with no team, alphabetical by department.
+ */
+export function teamCounts(employees: Employee[]): GroceryTeamCount[] {
+  const rows = new Map<string, GroceryTeamCount>();
   employees.forEach((e) => {
-    const d = departmentOf(e);
-    counts.set(d, (counts.get(d) || 0) + 1);
+    const department = departmentOf(e);
+    const key = groupKeyOf(e);
+    let row = rows.get(key);
+    if (!row) {
+      row = { key, departments: [], team: teamForDepartment(department)?.team || "", count: 0 };
+      rows.set(key, row);
+    }
+    if (!row.departments.includes(department)) row.departments.push(department);
+    row.count++;
   });
-  return [...counts.entries()]
-    .map(([department, count]) => ({
-      department,
-      team: teamForDepartment(department)?.team || "",
-      count,
-    }))
-    .sort((a, b) => compareText(a.department, b.department));
+  return [...rows.values()]
+    .map((r) => ({ ...r, departments: r.departments.sort(compareText) }))
+    .sort((a, b) => compareText(a.departments[0], b.departments[0]));
 }
 
 export type GrocerySheet = {
@@ -173,7 +186,7 @@ export function grocerySheets(employees: Employee[], reserved: string[] = []): G
   employees.forEach((e) => {
     const department = departmentOf(e);
     const team = teamForDepartment(department);
-    const key = team ? `team:${team.team}` : `dept:${normalize(department)}`;
+    const key = groupKeyOf(e);
     let group = groups.get(key);
     if (!group) {
       group = {

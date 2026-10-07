@@ -8,10 +8,11 @@ import { useNotifications } from "@/lib/notificationContext";
 import { countableEmployees, separationDate } from "@/lib/employeeStatus";
 import {
   compareByLastName,
-  departmentCounts,
+  groupKeyOf,
   departmentOf,
   groceryFullName,
   grocerySheets,
+  teamCounts,
   teamForDepartment,
 } from "@/lib/groceryPackage";
 
@@ -40,12 +41,12 @@ export default function GroceryPackage({
     () => countableEmployees(employees).filter((e) => separationDate(e, coeIndex) === null),
     [employees, coeIndex]
   );
-  const allDepartments = useMemo(() => departmentCounts(scoped), [scoped]);
+  const allTeams = useMemo(() => teamCounts(scoped), [scoped]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return scoped
-      .filter((e) => department === ALL || departmentOf(e) === department)
+      .filter((e) => department === ALL || groupKeyOf(e) === department)
       .filter(
         (e) =>
           !q ||
@@ -55,7 +56,7 @@ export default function GroceryPackage({
       )
       .sort(compareByLastName);
   }, [scoped, department, search]);
-  const counts = useMemo(() => departmentCounts(filtered), [filtered]);
+  const counts = useMemo(() => teamCounts(filtered), [filtered]);
   const isFiltered = department !== ALL || search.trim() !== "";
 
   async function handleExport() {
@@ -92,7 +93,7 @@ export default function GroceryPackage({
         c.alignment = { horizontal: col === 1 || col === 4 ? "center" : "left", vertical: "middle" };
       });
       counts.forEach((d, i) => {
-        const row = summary.addRow([i + 1, d.department, d.team || "No team assigned", d.count]);
+        const row = summary.addRow([i + 1, d.departments.join(" / "), d.team || "No team assigned", d.count]);
         row.eachCell((c, col) => {
           c.border = box;
           if (col === 1 || col === 4) c.alignment = { horizontal: "center" };
@@ -176,16 +177,16 @@ export default function GroceryPackage({
     <div className="mt-4">
       <div className="flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-1 text-xs text-ink-muted">
-          Department
+          Team
           <select
             value={department}
             onChange={(e) => setDepartment(e.target.value)}
             className="min-w-[14rem] rounded-md border border-border bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-accent"
           >
-            <option value={ALL}>All departments ({scoped.length})</option>
-            {allDepartments.map((d) => (
-              <option key={d.department} value={d.department}>
-                {d.department} ({d.count})
+            <option value={ALL}>All teams ({scoped.length})</option>
+            {allTeams.map((d) => (
+              <option key={d.key} value={d.key}>
+                {d.team || d.departments.join(" / ")} ({d.count})
               </option>
             ))}
           </select>
@@ -228,15 +229,15 @@ export default function GroceryPackage({
               <tbody>
                 {counts.map((d, i) => (
                   <tr
-                    key={d.department}
-                    onClick={() => setDepartment(department === d.department ? ALL : d.department)}
+                    key={d.key}
+                    onClick={() => setDepartment(department === d.key ? ALL : d.key)}
                     className={`cursor-pointer border-t border-border hover:bg-background ${
-                      department === d.department ? "bg-accent-soft" : ""
+                      department === d.key ? "bg-accent-soft" : ""
                     }`}
-                    title="Click to show only this department"
+                    title="Click to show only this team"
                   >
                     <td className="px-3 py-2 text-center tabular-nums text-ink-muted">{i + 1}</td>
-                    <td className="px-3 py-2 text-ink">{d.department}</td>
+                    <td className="px-3 py-2 text-ink">{d.departments.join(" / ")}</td>
                     <td className="px-3 py-2 text-ink-muted">{d.team || "No team assigned"}</td>
                     <td className="px-3 py-2 text-center font-medium tabular-nums text-ink">{d.count}</td>
                   </tr>
