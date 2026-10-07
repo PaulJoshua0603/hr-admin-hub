@@ -8,7 +8,9 @@ import { useNotifications } from "@/lib/notificationContext";
 import { countableEmployees, separationDate } from "@/lib/employeeStatus";
 import { useSupabaseStore } from "@/lib/useSupabaseStore";
 import {
+  GROCERY_EXTRAS,
   GROCERY_TEAMS,
+  groceryNote,
   NO_CLIENT,
   TEAM_CLIENTS_KEY,
   type TeamClient,
@@ -112,7 +114,11 @@ export default function GroceryPackage({
   // Recomputed from the live employee list, so adding, editing, resigning or onboarding
   // someone changes these counts straight away.
   const scoped = useMemo(
-    () => countableEmployees(employees).filter((e) => separationDate(e, coeIndex) === null),
+    () => [
+      ...countableEmployees(employees).filter((e) => separationDate(e, coeIndex) === null),
+      // Listed for the Grocery Package without an employee record (e.g. Vietnam-based).
+      ...GROCERY_EXTRAS,
+    ],
     [employees, coeIndex]
   );
 
@@ -247,6 +253,14 @@ export default function GroceryPackage({
             c.border = box;
             c.alignment = { horizontal: col === 1 ? "center" : "left", vertical: "middle" };
           });
+          // Someone listed only here: the ID cell says so, in amber.
+          const note = groceryNote(e);
+          if (note) {
+            const id = row.getCell(2);
+            id.value = "VIETNAM";
+            id.fill = solid("FFFDE68A");
+            id.note = note;
+          }
         });
 
         ws.addRow([]);
@@ -453,13 +467,23 @@ export default function GroceryPackage({
                       <td className="px-3 py-2 text-center tabular-nums text-ink-muted">{i + 1}</td>
                       <td className="px-3 py-2 tabular-nums text-ink-muted">{e.companyIdNumber || "—"}</td>
                       <td className="px-3 py-2">
-                        <button
-                          onClick={() => setEditingTeamFor(editingTeamFor === e.id ? null : e.id)}
-                          className="text-left text-ink hover:text-accent hover:underline"
-                          title="Change this employee's team"
-                        >
-                          {groceryFullName(e)}
-                        </button>
+                        {groceryNote(e) ? (
+                          // Not an employee record, so there is no team to save onto.
+                          <span className="text-ink">{groceryFullName(e)}</span>
+                        ) : (
+                          <button
+                            onClick={() => setEditingTeamFor(editingTeamFor === e.id ? null : e.id)}
+                            className="text-left text-ink hover:text-accent hover:underline"
+                            title="Change this employee's team"
+                          >
+                            {groceryFullName(e)}
+                          </button>
+                        )}
+                        {groceryNote(e) && (
+                          <span className="ml-2 inline-flex rounded-full bg-warn-soft px-2 py-0.5 text-[11px] font-medium text-warn ring-1 ring-warn/20">
+                            {groceryNote(e)}
+                          </span>
+                        )}
                       </td>
                       <td className="px-3 py-2 text-ink-muted">{e.position || ""}</td>
                       <td className="px-3 py-2 text-ink-muted">{departmentOf(e)}</td>
@@ -481,7 +505,7 @@ export default function GroceryPackage({
                         ) : (
                           <span>
                             {teamOf(e)?.team || "—"}
-                            {e.team && teamOf(e)?.team === e.team && (
+                            {e.team && teamOf(e)?.team === e.team && !groceryNote(e) && (
                               <span className="ml-1 text-[10px] uppercase text-accent" title="Set by hand">
                                 set
                               </span>

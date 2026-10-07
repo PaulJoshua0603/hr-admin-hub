@@ -89,6 +89,40 @@ export const DEFAULT_TEAM_CLIENTS: Record<string, string> = {
   "Team Catsys": "Catsys",
 };
 
+/**
+ * People who receive the Grocery Package but have no record in Employees — the
+ * attendance sheet lists them, the employee list does not. They are counted and
+ * exported like everyone else, and shown with `groceryNote` beside their name.
+ */
+type GroceryExtra = Pick<
+  Employee,
+  "id" | "name" | "lastName" | "firstName" | "position" | "department" | "team"
+> & { groceryNote: string };
+
+const GROCERY_EXTRAS_DATA: GroceryExtra[] = [
+  {
+    id: "grocery-extra-tran-hien",
+    name: "HIEN TRAN",
+    lastName: "TRAN",
+    firstName: "HIEN",
+    position: "SENIOR DRAFTER",
+    department: "Arch 2",
+    team: "Team Shiela-Arch 2",
+    groceryNote: "Vietnam-based · not in Employees",
+  },
+];
+
+export const GROCERY_EXTRAS: Employee[] = GROCERY_EXTRAS_DATA.map(
+  (x) => ({ ...x, dateAdded: "", requirementsDeadline: "", requirements: {} }) as unknown as Employee
+);
+
+const EXTRA_NOTES = new Map(GROCERY_EXTRAS_DATA.map((x) => [x.id, x.groceryNote]));
+
+/** The note for someone listed only in Grocery Package, or null for a real employee. */
+export function groceryNote(e: Employee): string | null {
+  return EXTRA_NOTES.get(e.id) ?? null;
+}
+
 /** Supabase store key for the Team → Client choices: `{ id: team name, client }`. */
 export const TEAM_CLIENTS_KEY = "hr_team_clients";
 export type TeamClient = { id: string; client: string };
