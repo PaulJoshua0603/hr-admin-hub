@@ -73,6 +73,45 @@ export const GROCERY_TEAMS: GroceryTeam[] = [
   { team: "Team Ely Arch 8", sheet: "Arch 8", departments: ["Arch 8"] },
 ];
 
+/**
+ * Which client each team works for: Client → Team → Department. These are only the
+ * starting values; HR sets the rest in the Team → Client editor (Grocery Package), which
+ * saves to `TEAM_CLIENTS_KEY` and wins over anything here.
+ */
+export const DEFAULT_TEAM_CLIENTS: Record<string, string> = {
+  "Team Atlas Building (Est 1 - Com)": "Atlas",
+  "Team Atlas Pre-Cast": "Atlas",
+  "Team Simonds Pampanga": "Simonds",
+  "Team Simonds BGC (Arch 1 & Simonds WA)": "Simonds",
+  "Team Aprille (Realform)": "Realform",
+  "Team Go Frameit-SF 1": "Go Frameit",
+  "Team Consolidated Energy (DE-Invoicing & DE-PO)": "Consolidated Energy",
+  "Team Catsys": "Catsys",
+};
+
+/** Supabase store key for the Team → Client choices: `{ id: team name, client }`. */
+export const TEAM_CLIENTS_KEY = "hr_team_clients";
+export type TeamClient = { id: string; client: string };
+
+/** Team name → client, saved choices over the defaults. */
+export function teamClientMap(saved: TeamClient[]): Map<string, string> {
+  const map = new Map(Object.entries(DEFAULT_TEAM_CLIENTS));
+  saved.forEach((s) => map.set(s.id, s.client.trim()));
+  return map;
+}
+
+export const NO_CLIENT = "No client set";
+
+/**
+ * An employee's client: their team's, so everyone on a team stays with the same client;
+ * for someone whose department has no team, the Client typed on their own record.
+ */
+export function clientOf(e: Employee, clients: Map<string, string>): string {
+  const team = teamForDepartment(departmentOf(e));
+  const fromTeam = team ? clients.get(team.team) : "";
+  return fromTeam || (e.client || "").trim() || NO_CLIENT;
+}
+
 /** "Est 1 - Res", "EST 1-RES" and "est1 res" are the same department. */
 const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 
@@ -132,20 +171,32 @@ export function groupKeyOf(e: Employee): string {
   return team ? `team:${team.team}` : `dept:${normalize(department)}`;
 }
 
-export type GroceryTeamCount = { key: string; departments: string[]; team: string; count: number };
+export type GroceryTeamCount = {
+  key: string;
+  departments: string[];
+  team: string;
+  client: string;
+  count: number;
+};
 
 /**
  * One row per team — Team Finance is one row however many of its departments have
  * people — and one per department with no team, alphabetical by department.
  */
-export function teamCounts(employees: Employee[]): GroceryTeamCount[] {
+export function teamCounts(employees: Employee[], clients: Map<string, string>): GroceryTeamCount[] {
   const rows = new Map<string, GroceryTeamCount>();
   employees.forEach((e) => {
     const department = departmentOf(e);
     const key = groupKeyOf(e);
     let row = rows.get(key);
     if (!row) {
-      row = { key, departments: [], team: teamForDepartment(department)?.team || "", count: 0 };
+      row = {
+        key,
+        departments: [],
+        team: teamForDepartment(department)?.team || "",
+        client: clientOf(e, clients),
+        count: 0,
+      };
       rows.set(key, row);
     }
     if (!row.departments.includes(department)) row.departments.push(department);
@@ -153,7 +204,12 @@ export function teamCounts(employees: Employee[]): GroceryTeamCount[] {
   });
   return [...rows.values()]
     .map((r) => ({ ...r, departments: r.departments.sort(compareText) }))
-    .sort((a, b) => compareText(a.departments[0], b.departments[0]));
+    .sort(
+      (a, b) =>
+        Number(a.client === NO_CLIENT) - Number(b.client === NO_CLIENT) ||
+        compareText(a.client, b.client) ||
+        compareText(a.departments[0], b.departments[0])
+    );
 }
 
 export type GrocerySheet = {

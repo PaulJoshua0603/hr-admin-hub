@@ -6,17 +6,34 @@ import type { Employee } from "@/types";
 import { Button, SearchInput, TableWrap } from "@/components/ui";
 import { useNotifications } from "@/lib/notificationContext";
 import { countableEmployees, separationDate } from "@/lib/employeeStatus";
+import { useSupabaseStore } from "@/lib/useSupabaseStore";
 import {
+  GROCERY_TEAMS,
+  NO_CLIENT,
+  TEAM_CLIENTS_KEY,
+  type TeamClient,
+  clientOf,
   compareByLastName,
+  compareText,
   groupKeyOf,
   departmentOf,
   groceryFullName,
   grocerySheets,
+  teamClientMap,
   teamCounts,
   teamForDepartment,
 } from "@/lib/groceryPackage";
 
 const ALL = "__all__";
+
+/** Distinct and alphabetical, with "No client set" kept at the end. */
+const uniqueSorted = (values: string[]) =>
+  [...new Set(values)].sort(
+    (a, b) => Number(a === NO_CLIENT) - Number(b === NO_CLIENT) || compareText(a, b)
+  );
+
+const SELECT =
+  "min-w-[12rem] rounded-md border border-border bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-accent";
 
 /**
  * Grocery Package: everyone currently employed plus new hires whose start date is still
@@ -31,9 +48,17 @@ export default function GroceryPackage({
   coeIndex: Map<string, string>;
 }) {
   const { notify } = useNotifications();
+  const { items: savedClients, setItems: setSavedClients } = useSupabaseStore<TeamClient>(
+    TEAM_CLIENTS_KEY,
+    []
+  );
+  const clients = useMemo(() => teamClientMap(savedClients), [savedClients]);
+  const [client, setClient] = useState(ALL);
+  const [team, setTeam] = useState(ALL);
   const [department, setDepartment] = useState(ALL);
   const [search, setSearch] = useState("");
   const [exporting, setExporting] = useState(false);
+  const [editingClients, setEditingClients] = useState(false);
 
   // Recomputed from the live employee list, so adding, editing, resigning or onboarding
   // someone changes these counts straight away.
@@ -41,12 +66,27 @@ export default function GroceryPackage({
     () => countableEmployees(employees).filter((e) => separationDate(e, coeIndex) === null),
     [employees, coeIndex]
   );
-  const allTeams = useMemo(() => teamCounts(scoped), [scoped]);
+
+  // Client → Team → Department: each picker only offers what sits under the one before it.
+  const clientOptions = useMemo(
+    () => uniqueSorted(scoped.map((e) => clientOf(e, clients))),
+    [scoped, clients]
+  );
+  const inClient = useMemo(
+    () => scoped.filter((e) => client === ALL || clientOf(e, clients) === client),
+    [scoped, client, clients]
+  );
+  const teamOptions = useMemo(() => teamCounts(inClient, clients), [inClient, clients]);
+  const inTeam = useMemo(
+    () => inClient.filter((e) => team === ALL || groupKeyOf(e) === team),
+    [inClient, team]
+  );
+  const departmentOptions = useMemo(() => uniqueSorted(inTeam.map(departmentOf)), [inTeam]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return scoped
-      .filter((e) => department === ALL || groupKeyOf(e) === department)
+    return inTeam
+      .filter((e) => department === ALL || departmentOf(e) === department)
       .filter(
         (e) =>
           !q ||
@@ -55,9 +95,27 @@ export default function GroceryPackage({
           )
       )
       .sort(compareByLastName);
-  }, [scoped, department, search]);
-  const counts = useMemo(() => teamCounts(filtered), [filtered]);
-  const isFiltered = department !== ALL || search.trim() !== "";
+  }, [inTeam, department, search]);
+  const counts = useMemo(() => teamCounts(filtered, clients), [filtered, clients]);
+  const isFiltered = client !== ALL || team !== ALL || department !== ALL || search.trim() !== "";
+
+  function pickClient(value: string) {
+    setClient(value);
+    setTeam(ALL);
+    setDepartment(ALL);
+  }
+  function pickTeam(value: string) {
+    setTeam(value);
+    setDepartment(ALL);
+  }
+
+  function saveTeamClient(teamName: string, value: string) {
+    const next = value.trim();
+    if (next === (clients.get(teamName) || "")) return;
+    setSavedClients([...savedClients.filter((s) => s.id !== teamName), { id: teamName, client: next }]);
+    // A filter on the old client name would otherwise hide the team that just moved.
+    pickClient(ALL);
+  }
 
   async function handleExport() {
     if (filtered.length === 0) {
@@ -75,35 +133,35 @@ export default function GroceryPackage({
 
       // Summary first: every department, its team and its count, with the grand total.
       const summary = wb.addWorksheet("Summary");
-      summary.columns = [{ width: 6 }, { width: 34 }, { width: 46 }, { width: 12 }];
+      summary.columns = [{ width: 6 }, { width: 24 }, { width: 46 }, { width: 34 }, { width: 12 }];
       const sTitle = summary.addRow(["Grocery Package — Employees per Department"]);
-      summary.mergeCells(sTitle.number, 1, sTitle.number, 4);
+      summary.mergeCells(sTitle.number, 1, sTitle.number, 5);
       sTitle.getCell(1).font = { bold: true, size: 13 };
       sTitle.getCell(1).fill = solid("FFEAF4F1");
       sTitle.getCell(1).alignment = { horizontal: "center", vertical: "middle" };
       const sDate = summary.addRow([`As of ${today}`]);
-      summary.mergeCells(sDate.number, 1, sDate.number, 4);
+      summary.mergeCells(sDate.number, 1, sDate.number, 5);
       sDate.getCell(1).alignment = { horizontal: "center" };
       sDate.getCell(1).font = { italic: true, color: { argb: "FF6B7280" } };
-      const sHead = summary.addRow(["No.", "Department", "Team", "Employees"]);
+      const sHead = summary.addRow(["No.", "Client", "Team", "Department", "Employees"]);
       sHead.eachCell((c, col) => {
         c.font = { bold: true, color: { argb: "FFFFFFFF" } };
         c.fill = solid("FF0E5E56");
         c.border = box;
-        c.alignment = { horizontal: col === 1 || col === 4 ? "center" : "left", vertical: "middle" };
+        c.alignment = { horizontal: col === 1 || col === 5 ? "center" : "left", vertical: "middle" };
       });
       counts.forEach((d, i) => {
-        const row = summary.addRow([i + 1, d.departments.join(" / "), d.team || "No team assigned", d.count]);
+        const row = summary.addRow([i + 1, d.client, d.team || "No team assigned", d.departments.join(" / "), d.count]);
         row.eachCell((c, col) => {
           c.border = box;
-          if (col === 1 || col === 4) c.alignment = { horizontal: "center" };
+          if (col === 1 || col === 5) c.alignment = { horizontal: "center" };
         });
       });
-      const sTotal = summary.addRow(["", "Grand Total", "", filtered.length]);
+      const sTotal = summary.addRow(["", "Grand Total", "", "", filtered.length]);
       sTotal.eachCell((c, col) => {
         c.font = { bold: true };
         c.border = box;
-        if (col === 4) c.alignment = { horizontal: "center" };
+        if (col === 5) c.alignment = { horizontal: "center" };
       });
 
       // Then one signing sheet per team (or per department with no team).
@@ -118,7 +176,7 @@ export default function GroceryPackage({
         title.getCell(1).fill = solid("FFEAF4F1");
         title.getCell(1).alignment = { horizontal: "center", vertical: "middle" };
 
-        const sub = ws.addRow([`Grocery Package · ${group.departments.join(", ")} · ${today}`]);
+        const sub = ws.addRow([`${clientOf(group.employees[0], clients)} · Grocery Package · ${group.departments.join(", ")} · ${today}`]);
         ws.mergeCells(sub.number, 1, sub.number, 5);
         sub.getCell(1).alignment = { horizontal: "center" };
         sub.getCell(1).font = { italic: true, color: { argb: "FF6B7280" } };
@@ -177,16 +235,34 @@ export default function GroceryPackage({
     <div className="mt-4">
       <div className="flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-1 text-xs text-ink-muted">
+          Client
+          <select value={client} onChange={(e) => pickClient(e.target.value)} className={SELECT}>
+            <option value={ALL}>All clients ({scoped.length})</option>
+            {clientOptions.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex flex-col gap-1 text-xs text-ink-muted">
           Team
-          <select
-            value={department}
-            onChange={(e) => setDepartment(e.target.value)}
-            className="min-w-[14rem] rounded-md border border-border bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-accent"
-          >
-            <option value={ALL}>All teams ({scoped.length})</option>
-            {allTeams.map((d) => (
+          <select value={team} onChange={(e) => pickTeam(e.target.value)} className={SELECT}>
+            <option value={ALL}>All teams ({inClient.length})</option>
+            {teamOptions.map((d) => (
               <option key={d.key} value={d.key}>
                 {d.team || d.departments.join(" / ")} ({d.count})
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex flex-col gap-1 text-xs text-ink-muted">
+          Department
+          <select value={department} onChange={(e) => setDepartment(e.target.value)} className={SELECT}>
+            <option value={ALL}>All departments ({inTeam.length})</option>
+            {departmentOptions.map((d) => (
+              <option key={d} value={d}>
+                {d}
               </option>
             ))}
           </select>
@@ -207,22 +283,66 @@ export default function GroceryPackage({
         </Button>
       </div>
 
-      <p className="mt-3 text-xs text-ink-muted">
-        Current employees and new hires with an upcoming onboarding date.
-        {isFiltered && ` Showing ${filtered.length} of ${scoped.length}.`}
-      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-ink-muted">
+        <span>
+          Current employees and new hires with an upcoming onboarding date.
+          {isFiltered && ` Showing ${filtered.length} of ${scoped.length}.`}
+        </span>
+        <button
+          onClick={() => setEditingClients((v) => !v)}
+          className="font-medium text-accent hover:underline"
+        >
+          {editingClients ? "Hide Team → Client" : "Set Team → Client"}
+        </button>
+      </div>
+
+      {editingClients && (
+        <div className="mt-3 rounded-lg border border-border bg-background p-3">
+          <p className="mb-2 text-xs text-ink-muted">
+            Type the client each team works for — everyone on the team takes it, and it shows on
+            their Employee details. Saved as you leave each box. Employees whose department has
+            no team keep the Client on their own record.
+          </p>
+          <datalist id="grocery-client-names">
+            {uniqueSorted([...clients.values()].filter(Boolean)).map((c) => (
+              <option key={c} value={c} />
+            ))}
+          </datalist>
+          <div className="grid grid-cols-1 gap-x-4 gap-y-2 md:grid-cols-2">
+            {GROCERY_TEAMS.map((t) => (
+              <label key={t.team} className="flex items-center gap-2 text-sm">
+                <span className="w-1/2 truncate text-ink" title={t.team}>
+                  {t.team}
+                </span>
+                <input
+                  key={clients.get(t.team) || ""}
+                  defaultValue={clients.get(t.team) || ""}
+                  list="grocery-client-names"
+                  placeholder="Client"
+                  onBlur={(e) => saveTeamClient(t.team, e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") e.currentTarget.blur();
+                  }}
+                  className="w-1/2 rounded-md border border-border bg-surface px-2 py-1 text-sm text-ink outline-none focus:border-accent"
+                />
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="mt-3 grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
         {/* Department counts */}
         <div>
-          <h3 className="mb-2 text-sm font-semibold text-ink">Employees per Department</h3>
+          <h3 className="mb-2 text-sm font-semibold text-ink">Employees per Team</h3>
           <TableWrap maxHeight="34rem">
             <table className="w-full text-left text-sm">
               <thead className="sticky top-0 bg-background">
                 <tr className="text-xs uppercase tracking-wide text-ink-muted">
                   <th className="px-3 py-2 text-center">No.</th>
-                  <th className="px-3 py-2">Department</th>
+                  <th className="px-3 py-2">Client</th>
                   <th className="px-3 py-2">Team</th>
+                  <th className="px-3 py-2">Department</th>
                   <th className="px-3 py-2 text-center">Count</th>
                 </tr>
               </thead>
@@ -230,21 +350,22 @@ export default function GroceryPackage({
                 {counts.map((d, i) => (
                   <tr
                     key={d.key}
-                    onClick={() => setDepartment(department === d.key ? ALL : d.key)}
+                    onClick={() => pickTeam(team === d.key ? ALL : d.key)}
                     className={`cursor-pointer border-t border-border hover:bg-background ${
-                      department === d.key ? "bg-accent-soft" : ""
+                      team === d.key ? "bg-accent-soft" : ""
                     }`}
                     title="Click to show only this team"
                   >
                     <td className="px-3 py-2 text-center tabular-nums text-ink-muted">{i + 1}</td>
-                    <td className="px-3 py-2 text-ink">{d.departments.join(" / ")}</td>
-                    <td className="px-3 py-2 text-ink-muted">{d.team || "No team assigned"}</td>
+                    <td className="px-3 py-2 text-ink-muted">{d.client}</td>
+                    <td className="px-3 py-2 text-ink">{d.team || "No team assigned"}</td>
+                    <td className="px-3 py-2 text-ink-muted">{d.departments.join(" / ")}</td>
                     <td className="px-3 py-2 text-center font-medium tabular-nums text-ink">{d.count}</td>
                   </tr>
                 ))}
                 <tr className="border-t-2 border-border bg-background font-semibold">
                   <td className="px-3 py-2" />
-                  <td className="px-3 py-2 text-ink" colSpan={2}>
+                  <td className="px-3 py-2 text-ink" colSpan={3}>
                     Grand Total
                   </td>
                   <td className="px-3 py-2 text-center tabular-nums text-ink">{filtered.length}</td>
@@ -267,12 +388,13 @@ export default function GroceryPackage({
                   <th className="px-3 py-2">Position</th>
                   <th className="px-3 py-2">Department</th>
                   <th className="px-3 py-2">Team</th>
+                  <th className="px-3 py-2">Client</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-3 py-6 text-center text-ink-muted">
+                    <td colSpan={7} className="px-3 py-6 text-center text-ink-muted">
                       No employees match this filter.
                     </td>
                   </tr>
@@ -287,12 +409,13 @@ export default function GroceryPackage({
                       <td className="px-3 py-2 text-ink-muted">
                         {teamForDepartment(departmentOf(e))?.team || "—"}
                       </td>
+                      <td className="px-3 py-2 text-ink-muted">{clientOf(e, clients)}</td>
                     </tr>
                   ))
                 )}
                 <tr className="border-t-2 border-border bg-background font-semibold">
                   <td className="px-3 py-2" />
-                  <td className="px-3 py-2 text-ink" colSpan={5}>
+                  <td className="px-3 py-2 text-ink" colSpan={6}>
                     Grand Total: {filtered.length}
                   </td>
                 </tr>

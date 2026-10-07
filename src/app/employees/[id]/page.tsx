@@ -8,6 +8,13 @@ import { useSupabaseStore } from "@/lib/useSupabaseStore";
 import { buildRelieverContractPdf, relieverContractFileName } from "@/lib/relieverContractPdf";
 import { buildEmployeeNamePdf, employeeNameFileName } from "@/lib/employeeNamePdf";
 import { formatPhilHealthInput } from "@/lib/er2Fields";
+import {
+  TEAM_CLIENTS_KEY,
+  type TeamClient,
+  departmentOf,
+  teamClientMap,
+  teamForDepartment,
+} from "@/lib/groceryPackage";
 import { useNotifications } from "@/lib/notificationContext";
 import { addDaysISO, addMonthsISO, daysSince, formatDate, isOverdue, nextMondayISO, todayISO } from "@/lib/dates";
 import {
@@ -85,6 +92,11 @@ export default function EmployeeDetailPage({
   const { items: coeRequests, add: addCoeRequest, update: updateCoeRequest, remove: removeCoeRequest } =
     useSupabaseStore<COERequest>("hr_coe_requests", []);
   const employee = employees.find((e) => e.id === id);
+  // The client comes from the team (Grocery Package → Set Team → Client), so everyone on a
+  // team shows the same one; only someone whose department has no team keeps their own.
+  const { items: teamClients } = useSupabaseStore<TeamClient>(TEAM_CLIENTS_KEY, []);
+  const employeeTeam = employee ? teamForDepartment(departmentOf(employee)) : null;
+  const teamClient = employeeTeam ? teamClientMap(teamClients).get(employeeTeam.team) || "" : "";
   const [birthdayInput, setBirthdayInput] = useState(
     employee?.birthday ? employee.birthday.slice(0, 10) : ""
   );
@@ -672,11 +684,22 @@ export default function EmployeeDetailPage({
             />
           </FieldGroup>
           <FieldGroup label="Client">
-            <Input
-              value={employee.client || ""}
-              disabled={!isEditing}
-              onChange={(e) => update(employee.id, { client: e.target.value })}
-            />
+            {teamClient ? (
+              <Input
+                value={teamClient}
+                disabled
+                title={`Set for ${employeeTeam?.team} under Grocery Package → Set Team → Client`}
+              />
+            ) : (
+              <Input
+                value={employee.client || ""}
+                disabled={!isEditing}
+                onChange={(e) => update(employee.id, { client: e.target.value })}
+              />
+            )}
+          </FieldGroup>
+          <FieldGroup label="Team">
+            <Input value={employeeTeam?.team || "No team for this department"} disabled />
           </FieldGroup>
           <FieldGroup label="Applicant Type">
             <select
