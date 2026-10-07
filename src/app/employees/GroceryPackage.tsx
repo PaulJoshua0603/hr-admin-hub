@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { format } from "date-fns";
 import type { Employee } from "@/types";
-import { Button, SearchInput, TableWrap } from "@/components/ui";
+import { Button, Input, SearchInput, TableWrap } from "@/components/ui";
 import { useNotifications } from "@/lib/notificationContext";
 import { countableEmployees, separationDate } from "@/lib/employeeStatus";
 import { useSupabaseStore } from "@/lib/useSupabaseStore";
@@ -108,6 +108,9 @@ export default function GroceryPackage({
   const [team, setTeam] = useState(ALL);
   const [department, setDepartment] = useState(ALL);
   const [search, setSearch] = useState("");
+  // Date Hired range; both blank shows everyone.
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
   const [exporting, setExporting] = useState(false);
   const [editingClients, setEditingClients] = useState(false);
 
@@ -122,14 +125,24 @@ export default function GroceryPackage({
     [employees, coeIndex]
   );
 
+  // Date range first, on Date Hired; with both dates blank nobody is left out.
+  const dated = useMemo(() => {
+    if (!startDate && !endDate) return scoped;
+    return scoped.filter((e) => {
+      const hired = (e.dateHired || "").slice(0, 10);
+      if (!hired) return false;
+      return (!startDate || hired >= startDate) && (!endDate || hired <= endDate);
+    });
+  }, [scoped, startDate, endDate]);
+
   // Client → Team → Department: each picker only offers what sits under the one before it.
   const clientOptions = useMemo(
-    () => uniqueSorted(scoped.map((e) => clientOf(e, clients))),
-    [scoped, clients]
+    () => uniqueSorted(dated.map((e) => clientOf(e, clients))),
+    [dated, clients]
   );
   const inClient = useMemo(
-    () => scoped.filter((e) => client === ALL || clientOf(e, clients) === client),
-    [scoped, client, clients]
+    () => dated.filter((e) => client === ALL || clientOf(e, clients) === client),
+    [dated, client, clients]
   );
   const teamOptions = useMemo(() => teamCounts(inClient, clients), [inClient, clients]);
   const inTeam = useMemo(
@@ -152,7 +165,8 @@ export default function GroceryPackage({
       .sort(compareByLastName);
   }, [inTeam, department, search]);
   const counts = useMemo(() => teamCounts(filtered, clients), [filtered, clients]);
-  const isFiltered = client !== ALL || team !== ALL || department !== ALL || search.trim() !== "";
+  const isFiltered =
+    client !== ALL || team !== ALL || department !== ALL || search.trim() !== "" || !!startDate || !!endDate;
 
   function pickClient(value: string) {
     setClient(value);
@@ -231,10 +245,6 @@ export default function GroceryPackage({
         title.getCell(1).fill = solid("FFEAF4F1");
         title.getCell(1).alignment = { horizontal: "center", vertical: "middle" };
 
-        const sub = ws.addRow([`${clientOf(group.employees[0], clients)} · Grocery Package · ${group.departments.join(", ")} · ${today}`]);
-        ws.mergeCells(sub.number, 1, sub.number, 5);
-        sub.getCell(1).alignment = { horizontal: "center" };
-        sub.getCell(1).font = { italic: true, color: { argb: "FF6B7280" } };
 
         const head = ws.addRow(["No.", "Employee ID", "Full Name", "Position", "Signature"]);
         head.height = 20;
@@ -298,6 +308,25 @@ export default function GroceryPackage({
     <div className="mt-4">
       <div className="flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-1 text-xs text-ink-muted">
+          Start date
+          <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+        </label>
+        <label className="flex flex-col gap-1 text-xs text-ink-muted">
+          End date
+          <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+        </label>
+        {(startDate || endDate) && (
+          <button
+            onClick={() => {
+              setStartDate("");
+              setEndDate("");
+            }}
+            className="mb-2 text-xs font-medium text-accent hover:underline"
+          >
+            Clear dates
+          </button>
+        )}
+        <label className="flex flex-col gap-1 text-xs text-ink-muted">
           Client
           <select value={client} onChange={(e) => pickClient(e.target.value)} className={SELECT}>
             <option value={ALL}>All clients ({scoped.length})</option>
@@ -348,7 +377,7 @@ export default function GroceryPackage({
 
       <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-ink-muted">
         <span>
-          Current employees and new hires with an upcoming onboarding date.
+          Current employees and new hires with an upcoming onboarding date. Start and End date filter by Date Hired.
           {isFiltered && ` Showing ${filtered.length} of ${scoped.length}.`}
         </span>
         <button

@@ -302,12 +302,23 @@ function safeSheetName(name: string, taken: Set<string>): string {
  * The employees split into one sheet per team (a department with no team gets a sheet of
  * its own), each sorted by name, sheets in alphabetical order of their tab names.
  */
+/**
+ * Groups that export onto another team's sheet instead of their own: Management and
+ * Leadership sign on the Admin & HR sheet.
+ */
+const EXPORT_SHEET_MERGES: Record<string, string> = {
+  "team:Team Management": "Team Admin & HR",
+  "dept:leadershipteam": "Team Admin & HR",
+};
+
 export function grocerySheets(employees: Employee[], reserved: string[] = []): GrocerySheet[] {
   const groups = new Map<string, Omit<GrocerySheet, "sheet"> & { sheetName: string }>();
   employees.forEach((e) => {
     const department = departmentOf(e);
-    const team = teamOf(e);
-    const key = groupKeyOf(e);
+    const ownKey = groupKeyOf(e);
+    const mergedInto = EXPORT_SHEET_MERGES[ownKey];
+    const team = mergedInto ? TEAM_BY_NAME.get(mergedInto) ?? null : teamOf(e);
+    const key = mergedInto ? `team:${mergedInto}` : ownKey;
     let group = groups.get(key);
     if (!group) {
       group = {
