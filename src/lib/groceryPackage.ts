@@ -284,6 +284,8 @@ export type GrocerySheet = {
   sheet: string;
   departments: string[];
   employees: Employee[];
+  /** Listed under the Total, outside the count, each with a note on their team. */
+  appended: { employee: Employee; note: string }[];
 };
 
 /** Excel refuses \ / ? * [ ] : in tab names and anything past 31 characters. */
@@ -303,22 +305,22 @@ function safeSheetName(name: string, taken: Set<string>): string {
  * its own), each sorted by name, sheets in alphabetical order of their tab names.
  */
 /**
- * Groups that export onto another team's sheet instead of their own: Management and
- * Leadership sign on the Admin & HR sheet.
+ * Groups that sign on another team's sheet instead of having their own: Leadership, then
+ * Management, go under the Admin & HR total — listed there, but not counted in it.
  */
-const EXPORT_SHEET_MERGES: Record<string, string> = {
-  "team:Team Management": "Team Admin & HR",
-  "dept:leadershipteam": "Team Admin & HR",
-};
+const EXPORT_SHEET_APPENDS: { from: string; into: string; note: string }[] = [
+  { from: "dept:leadershipteam", into: "Team Admin & HR", note: "No team assigned" },
+  { from: "team:Team Management", into: "Team Admin & HR", note: "Team: Management" },
+];
 
 export function grocerySheets(employees: Employee[], reserved: string[] = []): GrocerySheet[] {
   const groups = new Map<string, Omit<GrocerySheet, "sheet"> & { sheetName: string }>();
   employees.forEach((e) => {
     const department = departmentOf(e);
     const ownKey = groupKeyOf(e);
-    const mergedInto = EXPORT_SHEET_MERGES[ownKey];
-    const team = mergedInto ? TEAM_BY_NAME.get(mergedInto) ?? null : teamOf(e);
-    const key = mergedInto ? `team:${mergedInto}` : ownKey;
+    const append = EXPORT_SHEET_APPENDS.find((a) => a.from === ownKey);
+    const team = append ? TEAM_BY_NAME.get(append.into) ?? null : teamOf(e);
+    const key = append ? `team:${append.into}` : ownKey;
     let group = groups.get(key);
     if (!group) {
       group = {
@@ -327,8 +329,13 @@ export function grocerySheets(employees: Employee[], reserved: string[] = []): G
         sheetName: team?.sheet || department,
         departments: [],
         employees: [],
+        appended: [],
       };
       groups.set(key, group);
+    }
+    if (append) {
+      group.appended.push({ employee: e, note: append.note });
+      return;
     }
     if (!group.departments.includes(department)) group.departments.push(department);
     group.employees.push(e);
@@ -342,5 +349,12 @@ export function grocerySheets(employees: Employee[], reserved: string[] = []): G
       sheet: safeSheetName(sheetName, taken),
       departments: g.departments.sort(compareText),
       employees: [...g.employees].sort(compareByLastName),
+      // Leadership before Management, each by name.
+      appended: [...g.appended].sort(
+        (a, b) =>
+          EXPORT_SHEET_APPENDS.findIndex((x) => x.note === a.note) -
+            EXPORT_SHEET_APPENDS.findIndex((x) => x.note === b.note) ||
+          compareByLastName(a.employee, b.employee)
+      ),
     }));
 }

@@ -279,6 +279,26 @@ export default function GroceryPackage({
         ]);
         total.getCell(1).font = { bold: true };
 
+        // Under the Total and outside it: people who sign here without being on this team
+        // (Leadership, Management on Admin & HR), each with a note saying which team.
+        if (group.appended.length > 0) {
+          ws.getColumn(6).width = 22;
+          ws.addRow([]);
+          group.appended.forEach(({ employee: e, note }) => {
+            const row = ws.addRow(["", e.companyIdNumber || "", groceryFullName(e), e.position || "", "", note]);
+            row.height = 24;
+            for (let col = 1; col <= 5; col++) {
+              const c = row.getCell(col);
+              c.border = box;
+              c.alignment = { horizontal: col === 1 ? "center" : "left", vertical: "middle" };
+            }
+            const tag = row.getCell(6);
+            tag.font = { italic: true, color: { argb: "FF92400E" } };
+            tag.fill = solid("FFFDE68A");
+            tag.alignment = { vertical: "middle" };
+          });
+        }
+
         // Prints on one page width with the column headings repeated on every page.
         ws.pageSetup = { orientation: "portrait", fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
         ws.pageSetup.printTitlesRow = `${head.number}:${head.number}`;
