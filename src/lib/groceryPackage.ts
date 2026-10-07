@@ -49,7 +49,7 @@ export const GROCERY_TEAMS: GroceryTeam[] = [
     sheet: "Admin & HR",
     departments: ["Admin", "Talent Acquisition", "HRIS Administrator", "General HR Services"],
   },
-  { team: "Team Shiela-Arch 2", sheet: "Arch 2", departments: ["Arch 2C", "Arch 2"] },
+  { team: "Team Shiela-Arch 2", sheet: "Arch 2", departments: ["Arch 2", "Arch 2A", "Arch 2C"] },
   { team: "Team Aprille (Realform)", sheet: "Adrch D 1", departments: ["Adrch D 1"] },
   {
     team: "Team Chris - IT Support",
@@ -103,13 +103,14 @@ export function teamClientMap(saved: TeamClient[]): Map<string, string> {
 export const NO_CLIENT = "No client set";
 
 /**
- * An employee's client: their team's, so everyone on a team stays with the same client;
- * for someone whose department has no team, the Client typed on their own record.
+ * An employee's client: their team's, so everyone on a team stays with the same client
+ * (a Client typed on one member's record never splits them off); only someone with no
+ * team at all uses the Client on their own record.
  */
 export function clientOf(e: Employee, clients: Map<string, string>): string {
   const team = teamOf(e);
-  const fromTeam = team ? clients.get(team.team) : "";
-  return fromTeam || (e.client || "").trim() || NO_CLIENT;
+  if (team) return clients.get(team.team) || NO_CLIENT;
+  return (e.client || "").trim() || NO_CLIENT;
 }
 
 /** "Est 1 - Res", "EST 1-RES" and "est1 res" are the same department. */

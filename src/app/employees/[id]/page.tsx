@@ -684,11 +684,12 @@ export default function EmployeeDetailPage({
             />
           </FieldGroup>
           <FieldGroup label="Client">
-            {teamClient ? (
+            {employeeTeam ? (
               <Input
                 value={teamClient}
+                placeholder="No client set for this team"
                 disabled
-                title={`Set for ${employeeTeam?.team} under Grocery Package → Set Team → Client`}
+                title={`Set for ${employeeTeam.team} under Grocery Package → Set Team → Client`}
               />
             ) : (
               <Input
