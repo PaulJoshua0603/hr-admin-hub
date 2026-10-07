@@ -108,7 +108,7 @@ const GROCERY_EXTRAS_DATA: GroceryExtra[] = [
     position: "SENIOR DRAFTER",
     department: "Arch 2",
     team: "Team Shiela-Arch 2",
-    groceryNote: "Vietnam-based · not in Employees",
+    groceryNote: "Vietnam-based · not in the main Employees list · counted under Team Shiela-Arch 2",
   },
 ];
 

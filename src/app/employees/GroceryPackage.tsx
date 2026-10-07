@@ -129,6 +129,8 @@ export default function GroceryPackage({
     if (!endDate) return scoped;
     return scoped.filter((e) => {
       const hired = (e.dateHired || "").slice(0, 10);
+      // Grocery-only people (no record, no hire date) are always counted.
+      if (groceryNote(e)) return true;
       return !!hired && hired <= endDate;
     });
   }, [scoped, endDate]);
