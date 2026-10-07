@@ -108,8 +108,7 @@ export default function GroceryPackage({
   const [team, setTeam] = useState(ALL);
   const [department, setDepartment] = useState(ALL);
   const [search, setSearch] = useState("");
-  // Date Hired range; both blank shows everyone.
-  const [startDate, setStartDate] = useState("");
+  // Hired on or before this date; blank shows everyone.
   const [endDate, setEndDate] = useState("");
   const [exporting, setExporting] = useState(false);
   const [editingClients, setEditingClients] = useState(false);
@@ -125,15 +124,14 @@ export default function GroceryPackage({
     [employees, coeIndex]
   );
 
-  // Date range first, on Date Hired; with both dates blank nobody is left out.
+  // End date first: everyone hired on or before it. Blank leaves nobody out.
   const dated = useMemo(() => {
-    if (!startDate && !endDate) return scoped;
+    if (!endDate) return scoped;
     return scoped.filter((e) => {
       const hired = (e.dateHired || "").slice(0, 10);
-      if (!hired) return false;
-      return (!startDate || hired >= startDate) && (!endDate || hired <= endDate);
+      return !!hired && hired <= endDate;
     });
-  }, [scoped, startDate, endDate]);
+  }, [scoped, endDate]);
 
   // Client → Team → Department: each picker only offers what sits under the one before it.
   const clientOptions = useMemo(
@@ -166,7 +164,7 @@ export default function GroceryPackage({
   }, [inTeam, department, search]);
   const counts = useMemo(() => teamCounts(filtered, clients), [filtered, clients]);
   const isFiltered =
-    client !== ALL || team !== ALL || department !== ALL || search.trim() !== "" || !!startDate || !!endDate;
+    client !== ALL || team !== ALL || department !== ALL || search.trim() !== "" || !!endDate;
 
   function pickClient(value: string) {
     setClient(value);
@@ -308,22 +306,15 @@ export default function GroceryPackage({
     <div className="mt-4">
       <div className="flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-1 text-xs text-ink-muted">
-          Start date
-          <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-        </label>
-        <label className="flex flex-col gap-1 text-xs text-ink-muted">
           End date
           <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
         </label>
-        {(startDate || endDate) && (
+        {endDate && (
           <button
-            onClick={() => {
-              setStartDate("");
-              setEndDate("");
-            }}
+            onClick={() => setEndDate("")}
             className="mb-2 text-xs font-medium text-accent hover:underline"
           >
-            Clear dates
+            Clear date
           </button>
         )}
         <label className="flex flex-col gap-1 text-xs text-ink-muted">
@@ -377,7 +368,7 @@ export default function GroceryPackage({
 
       <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-ink-muted">
         <span>
-          Current employees and new hires with an upcoming onboarding date. Start and End date filter by Date Hired.
+          Current employees and new hires with an upcoming onboarding date. End date shows everyone hired on or before it.
           {isFiltered && ` Showing ${filtered.length} of ${scoped.length}.`}
         </span>
         <button
