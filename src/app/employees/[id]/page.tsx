@@ -602,7 +602,19 @@ export default function EmployeeDetailPage({
 
       <SectionHeading
         title={employee.name}
-        subtitle={[employee.position, employee.department].filter(Boolean).join(" · ") || undefined}
+        subtitle={
+          [
+            employee.position,
+            employee.department,
+            employee.isReliever && employee.relieverAbsorbedDate
+              ? `Absorbed ${formatDate(employee.relieverAbsorbedDate, "MMMM d, yyyy")}`
+              : employee.isReliever
+                ? "Temporary Reliever"
+                : "",
+          ]
+            .filter(Boolean)
+            .join(" · ") || undefined
+        }
         action={
           <div className="flex items-center gap-2">
             {isEditing ? (
@@ -723,15 +735,45 @@ export default function EmployeeDetailPage({
             </select>
           </FieldGroup>
           <FieldGroup label="Reliever">
-            <div className="flex h-9 items-center">
+            <div className="flex min-h-9 flex-wrap items-center gap-x-5 gap-y-1">
               <Checkbox
                 checked={!!employee.isReliever}
                 disabled={!isEditing}
                 onChange={(checked) => update(employee.id, { isReliever: checked })}
                 label="This employee is a reliever"
               />
+              {/* Absorbed records only its own date: dateHired, and the 3rd Month / 6th
+                  Month / 1 Year milestones counted from it, are never touched. */}
+              {employee.isReliever && (
+                <Checkbox
+                  checked={!!employee.relieverAbsorbedDate}
+                  disabled={!isEditing}
+                  onChange={(checked) =>
+                    update(employee.id, {
+                      relieverAbsorbedDate: checked
+                        ? `${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`
+                        : undefined,
+                    })
+                  }
+                  label="Absorbed"
+                />
+              )}
             </div>
           </FieldGroup>
+          {employee.isReliever && employee.relieverAbsorbedDate && (
+            <FieldGroup label="Absorption Date">
+              <Input
+                type="date"
+                value={employee.relieverAbsorbedDate.slice(0, 10)}
+                disabled={!isEditing}
+                onChange={(e) =>
+                  e.target.value &&
+                  update(employee.id, { relieverAbsorbedDate: `${e.target.value}T00:00:00.000Z` })
+                }
+                title="Official absorption date — the onboarding date and milestones do not change"
+              />
+            </FieldGroup>
+          )}
         </div>
         {employee.isReliever && (
           <div className="mt-4 rounded-lg border border-border bg-background p-3">
@@ -1381,6 +1423,16 @@ export default function EmployeeDetailPage({
                       )}
                     </span>
                   )}
+                </label>
+                <label className="flex flex-col gap-1 text-xs text-ink-muted sm:col-span-2">
+                  Resignation Reason
+                  <Textarea
+                    rows={2}
+                    placeholder="e.g. Career growth, relocation, health reasons"
+                    value={employee.reasonForLeaving || ""}
+                    disabled={!isEditing}
+                    onChange={(e) => update(employee.id, { reasonForLeaving: e.target.value })}
+                  />
                 </label>
               </div>
               <Button className="mt-2" variant="danger" disabled={!isEditing} onClick={generateCOEResigned}>

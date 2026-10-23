@@ -52,8 +52,12 @@ import {
 import {
   groupEmployees,
   resignedCoeIndex,
+  isAbsorbed,
+  isTemporaryReliever,
+  relieverTag as relieverTagOf,
   separationDate as separationDateOf,
 } from "@/lib/employeeStatus";
+import { EmployeeRelieverTag, RelieverTag } from "@/components/RelieverTag";
 import {
   NOT_SET_LABEL,
   milestoneNoteTone,
@@ -143,6 +147,7 @@ export default function EmployeesPage() {
   const [position, setPosition] = useState("");
   const [department, setDepartment] = useState("");
   const [client, setClient] = useState("");
+  const [resignationReason, setResignationReason] = useState("");
   const [dateHired, setDateHired] = useState("");
 
 
@@ -281,6 +286,7 @@ export default function EmployeesPage() {
       position: position.trim() || undefined,
       department: department.trim() || undefined,
       client: client.trim() || undefined,
+      reasonForLeaving: resignationReason.trim() || undefined,
       // Only carried when this is a reliever, so an ordinary hire keeps a clean record.
       isReliever: isReliever || undefined,
       relieverEndDate: isReliever && relieverEndDate ? new Date(relieverEndDate).toISOString() : undefined,
@@ -314,6 +320,7 @@ export default function EmployeesPage() {
     setPosition("");
     setDepartment("");
     setClient("");
+    setResignationReason("");
     setDateHired("");
     setShowForm(false);
   }
@@ -988,6 +995,14 @@ export default function EmployeesPage() {
               />
             </label>
           </div>
+          <label className="mt-3 flex flex-col gap-1 text-xs text-ink-muted">
+            Resignation Reason (optional, if applicable)
+            <Input
+              placeholder="e.g. Career growth, relocation"
+              value={resignationReason}
+              onChange={(e) => setResignationReason(e.target.value)}
+            />
+          </label>
           <label className="mt-4 flex items-center gap-2 text-sm text-ink">
             <input
               type="checkbox"
@@ -1111,7 +1126,10 @@ export default function EmployeesPage() {
           return (
             <Card key={e.id} className="flex items-center justify-between hover:border-accent transition-colors">
               <Link href={`/employees/${e.id}`} className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-ink">{e.name}</p>
+                <p className="text-sm font-medium text-ink">
+                  {e.name}
+                  <EmployeeRelieverTag employee={e} />
+                </p>
                 <p className="text-xs text-ink-muted">
                   {[e.position, e.department].filter(Boolean).join(" · ") || "—"}
                 </p>
@@ -1469,8 +1487,10 @@ type FilterRow = {
   replacedName?: string;
   replacedReason?: string;
   replacedPosition?: string;
-  /** Temporary Reliever: labelled as such wherever they appear in the milestone lists. */
-  isReliever?: boolean;
+  /** "Temporary Reliever" or "Absorbed", shown beside the name in every milestone list. */
+  relieverTag?: string;
+  /** When an absorbed reliever was taken on; never changes their milestone dates. */
+  absorbedDate?: string;
   /** Only on a Reliever Contract row: their onboarding date and milestone dates. */
   hiredDate?: string;
   thirdDate?: string;
@@ -1560,6 +1580,8 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
   const [milestoneType, setMilestoneType] = useState<MilestoneType>("birthday");
   // Grocery Package sits beside the milestone tabs but is not a dated milestone.
   const [showGrocery, setShowGrocery] = useState(false);
+  // The Reliever Contract row whose absorption date is being picked, and that date.
+  const [absorbing, setAbsorbing] = useState<{ id: string; date: string } | null>(null);
   const today = new Date();
   const [preset, setPreset] = useState<TimeframePreset>("month");
   const [startDate, setStartDate] = useState(startOfMonthISO(today));
@@ -1752,13 +1774,13 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
    */
   function relieverRows(): FilterRow[] {
     return employees
-      .filter((e) => e.isReliever && separationDate(e) === null)
+      .filter((e) => isTemporaryReliever(e) && separationDate(e) === null)
       .map((e) => {
         const end = e.relieverEndDate ? new Date(e.relieverEndDate).toISOString() : "";
         return {
           // Sorted on the contract end; no end date sorts last.
           ...toFilterRow(e, end || "9999-12-31T00:00:00.000Z"),
-          isReliever: true,
+          relieverTag: "Temporary Reliever",
           hiredDate: e.dateHired || "",
           thirdDate: e.dateHired ? milestoneDateISO(e.dateHired, 3) : "",
           sixthDate: e.dateHired ? milestoneDateISO(e.dateHired, 6) : "",
@@ -1767,11 +1789,37 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
       });
   }
 
-  /** Reliever taken on as a regular employee: from here on they are tracked as one. */
-  function markAbsorbed(row: FilterRow) {
-    if (!window.confirm(`Mark ${row.name} as absorbed into a regular position?`)) return;
-    updateEmployee(row.id, { isReliever: false, relieverAbsorbedDate: todayISO() });
-    notify(`${row.name} is now a regular employee — the Temporary Reliever label is removed`, "created");
+  /**
+   * Relievers already absorbed, latest first, with the absorption date kept beside the
+   * onboarding date and milestones it leaves untouched — the history under the active list.
+   */
+  function absorbedRows(): FilterRow[] {
+    return employees
+      .filter((e) => isAbsorbed(e) && separationDate(e) === null)
+      .map((e) => ({
+        ...toFilterRow(e, e.relieverAbsorbedDate!),
+        relieverTag: "Absorbed",
+        absorbedDate: e.relieverAbsorbedDate,
+        hiredDate: e.dateHired || "",
+        thirdDate: e.dateHired ? milestoneDateISO(e.dateHired, 3) : "",
+        sixthDate: e.dateHired ? milestoneDateISO(e.dateHired, 6) : "",
+      }))
+      .sort((a, b) => (a.date < b.date ? 1 : -1));
+  }
+
+  /**
+   * Records the official absorption date. Only that date is written: the onboarding date,
+   * and the 3rd Month / 6th Month / 1 Year milestones counted from it, stay exactly as
+   * they were.
+   */
+  function confirmAbsorbed(row: FilterRow) {
+    if (!absorbing?.date) return;
+    updateEmployee(row.id, { relieverAbsorbedDate: `${absorbing.date}T00:00:00.000Z` });
+    notify(
+      `${row.name} absorbed on ${formatDate(`${absorbing.date}T00:00:00.000Z`, "MMMM d, yyyy")} — tag now reads Absorbed`,
+      "created"
+    );
+    setAbsorbing(null);
   }
 
   function toFilterRow(e: Employee, date: string): FilterRow {
@@ -1820,7 +1868,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
     if (milestoneType === "relieverEnd") return relieverRows();
     const monthsMap: Record<MilestoneType, number> = { birthday: 0, relieverEnd: 0, third: 3, sixth: 6, oneYear: 12 };
     const months = monthsMap[milestoneType];
-    // Temporary Relievers are included, labelled (isReliever).
+    // Relievers are included, labelled "Temporary Reliever" or "Absorbed".
     return employees
       .filter((e) => e.dateHired && !e.lastDay)
       .map((e) => {
@@ -1834,7 +1882,8 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
           email: e.realcognitaEmail || "",
           supervisor: e.immediateSupervisor || "",
           date: d.toISOString(),
-          isReliever: !!e.isReliever,
+          relieverTag: relieverTagOf(e) || undefined,
+          absorbedDate: e.relieverAbsorbedDate,
         };
       })
       .filter((r) => inRange(r.date, startDate, endDate));
@@ -2063,7 +2112,12 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
       }
 
       /** "Sibal, Eren Mae I. (Temporary Reliever)" in the regular milestone sheets. */
-      const nameCell = (r: FilterRow) => (r.isReliever ? `${r.name} (Temporary Reliever)` : r.name);
+      const nameCell = (r: FilterRow) =>
+        !r.relieverTag
+          ? r.name
+          : r.relieverTag === "Absorbed" && r.absorbedDate
+            ? `${r.name} (Absorbed ${formatDate(r.absorbedDate, "MMMM d, yyyy")})`
+            : `${r.name} (${r.relieverTag})`;
 
       function rowFor(r: FilterRow, index: number): (string | number)[] {
         if (isReliever) {
@@ -2206,7 +2260,8 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
               email: e.realcognitaEmail || "",
               supervisor: e.immediateSupervisor || "",
               date: d.toISOString(),
-              isReliever: !!e.isReliever,
+              relieverTag: relieverTagOf(e) || undefined,
+              absorbedDate: e.relieverAbsorbedDate,
             };
           })
           .filter((r) => inRange(r.date, startDate, endDate))
@@ -2234,6 +2289,46 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
         [...months.keys()].sort().forEach((key) => {
           if (key === "relievers") {
             buildSheet("", "Temporary Relievers", rows);
+            // Absorbed relievers on a sheet of their own, absorption date beside the
+            // onboarding date and milestones it did not change.
+            const absorbed = absorbedRows();
+            if (absorbed.length > 0) {
+              const ws = wb.addWorksheet("Absorbed Relievers");
+              const cols = [
+                "Employee Name",
+                "Position",
+                "Department",
+                "Immediate Supervisor",
+                "Hire/Onboarding Date",
+                "3rd Month Milestone Date",
+                "6th Month Milestone Date",
+                "Absorption Date",
+              ];
+              ws.columns = cols.map((c) => ({ width: c.length < 16 ? 22 : c.length + 6 }));
+              const title = ws.addRow(["Absorbed Relievers"]);
+              ws.mergeCells(title.number, 1, title.number, cols.length);
+              title.getCell(1).font = { bold: true, size: 13, color: { argb: "FF0A2E2A" } };
+              title.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE4F0EE" } };
+              title.getCell(1).alignment = { horizontal: "center", vertical: "middle" };
+              const head = ws.addRow(cols);
+              head.eachCell((c) => {
+                c.font = { bold: true, color: { argb: "FFFFFFFF" } };
+                c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0E5E56" } };
+              });
+              absorbed.forEach((r) =>
+                ws.addRow([
+                  r.name,
+                  r.position,
+                  r.department,
+                  r.supervisor,
+                  ...[r.hiredDate, r.thirdDate, r.sixthDate, r.absorbedDate].map((d) =>
+                    d ? formatDate(d, "MMMM d, yyyy") : ""
+                  ),
+                ])
+              );
+              ws.addRow([]);
+              ws.addRow([`Total: ${absorbed.length}`]).getCell(1).font = { bold: true };
+            }
             return;
           }
           const label = format(new Date(`${key}-01T00:00:00`), "MMMM yyyy");
@@ -2465,11 +2560,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                             <Link href={`/employees/${r.id}`} className="hover:text-accent">
                               {r.name}
                             </Link>
-                            {r.isReliever && (
-                              <span className="ml-2 inline-flex whitespace-nowrap rounded-full bg-warn-soft px-2 py-0.5 text-[11px] font-medium text-warn ring-1 ring-warn/20">
-                                Temporary Reliever
-                              </span>
-                            )}
+                            <RelieverTag tag={r.relieverTag} absorbedDate={r.absorbedDate} />
                           </td>
                           <td className="px-3 py-2 text-ink-muted">{r.position || "—"}</td>
                           <td className="px-3 py-2 text-ink-muted">{r.department || "—"}</td>
@@ -2527,14 +2618,32 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                           )}
                           {isRelieverView && (
                             <td className="px-3 py-2">
-                              <Button
-                                size="sm"
-                                variant="secondary"
-                                onClick={() => markAbsorbed(r)}
-                                title="Taken on as a regular employee: moves their 3rd Month, 6th Month and 1 Year to the regular milestone lists"
-                              >
-                                Mark Absorbed
-                              </Button>
+                              {absorbing?.id === r.id ? (
+                                <div className="flex items-center gap-1.5">
+                                  <Input
+                                    type="date"
+                                    value={absorbing.date}
+                                    onChange={(e) => setAbsorbing({ id: r.id, date: e.target.value })}
+                                    className="w-40"
+                                    aria-label="Absorption date"
+                                  />
+                                  <Button size="sm" disabled={!absorbing.date} onClick={() => confirmAbsorbed(r)}>
+                                    Save
+                                  </Button>
+                                  <Button size="sm" variant="ghost" onClick={() => setAbsorbing(null)}>
+                                    Cancel
+                                  </Button>
+                                </div>
+                              ) : (
+                                <Button
+                                  size="sm"
+                                  variant="secondary"
+                                  onClick={() => setAbsorbing({ id: r.id, date: format(new Date(), "yyyy-MM-dd") })}
+                                  title="Pick the official absorption date — the onboarding date and milestones stay as they are"
+                                >
+                                  Mark Absorbed
+                                </Button>
+                              )}
                             </td>
                           )}
                           {milestoneType === "third" && isMilestoneView && (
@@ -2623,6 +2732,57 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                       ))}
                     </tbody>
                   </table>
+                </div>
+              )}
+
+              {isRelieverView && absorbedRows().length > 0 && (
+                <div className="mt-6">
+                  <h3 className="text-sm font-semibold text-ink">
+                    Absorbed Relievers ({absorbedRows().length})
+                  </h3>
+                  <p className="mt-0.5 text-xs text-ink-muted">
+                    No longer on the active list above. Their onboarding date and milestones are
+                    unchanged; the absorption date is kept separately.
+                  </p>
+                  <div className="mt-2 overflow-x-auto rounded-lg border border-border">
+                    <table className="w-full min-w-[820px] text-left text-sm">
+                      <thead>
+                        <tr className="bg-background text-xs uppercase tracking-wide text-ink-muted">
+                          <th className="px-3 py-2">Employee Name</th>
+                          <th className="px-3 py-2">Position</th>
+                          <th className="px-3 py-2">Department</th>
+                          <th className="px-3 py-2">Immediate Supervisor</th>
+                          <th className="px-3 py-2">Hire/Onboarding Date</th>
+                          <th className="px-3 py-2">3rd Month Milestone Date</th>
+                          <th className="px-3 py-2">6th Month Milestone Date</th>
+                          <th className="px-3 py-2">Absorption Date</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {absorbedRows().map((r) => (
+                          <tr key={r.id} className="border-t border-border">
+                            <td className="px-3 py-2 text-ink">
+                              <Link href={`/employees/${r.id}`} className="hover:text-accent">
+                                {r.name}
+                              </Link>
+                              <RelieverTag tag="Absorbed" />
+                            </td>
+                            <td className="px-3 py-2 text-ink-muted">{r.position || "—"}</td>
+                            <td className="px-3 py-2 text-ink-muted">{r.department || "—"}</td>
+                            <td className="px-3 py-2 text-ink-muted">{r.supervisor || "—"}</td>
+                            {[r.hiredDate, r.thirdDate, r.sixthDate, r.absorbedDate].map((d, i) => (
+                              <td
+                                key={i}
+                                className={`whitespace-nowrap px-3 py-2 ${i === 3 ? "font-medium text-ink" : "text-ink-muted"}`}
+                              >
+                                {d ? formatDate(d, "MMMM d, yyyy") : "—"}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
             </>

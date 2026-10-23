@@ -617,7 +617,10 @@ export type Employee = {
   // Reliever engagement. Only meaningful when isReliever is true; the temporary contract
   // and the end-of-contract milestone are both driven from these.
   isReliever?: boolean;
-  /** When a reliever was absorbed into a regular position (isReliever is then off). */
+  /**
+   * Official date a reliever was absorbed into the company. Stored apart from dateHired,
+   * which is never changed by it; isReliever stays on as history.
+   */
   relieverAbsorbedDate?: string; // ISO date
   /** Last day of the reliever assignment. */
   relieverEndDate?: string; // ISO date

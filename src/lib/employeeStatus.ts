@@ -79,6 +79,25 @@ export function resignedCoeIndex(coeRequests: COERequest[]): Map<string, string>
 export const RELIEVER_CONTRACT_ENDED_REASON = "End of Contract (Reliever)";
 
 /**
+ * A reliever taken on into the company. They stay marked as a reliever (that history is
+ * kept) and the absorption date is stored on its own, so their onboarding date and the
+ * 3rd Month / 6th Month / 1 Year milestones counted from it never move.
+ */
+export function isAbsorbed(e: Employee): boolean {
+  return !!e.isReliever && !!e.relieverAbsorbedDate;
+}
+
+/** A reliever still on their temporary engagement — not yet absorbed. */
+export function isTemporaryReliever(e: Employee): boolean {
+  return !!e.isReliever && !e.relieverAbsorbedDate;
+}
+
+/** "Temporary Reliever", "Absorbed", or "" for everyone else — the tag shown by their name. */
+export function relieverTag(e: Employee): "" | "Temporary Reliever" | "Absorbed" {
+  return isAbsorbed(e) ? "Absorbed" : isTemporaryReliever(e) ? "Temporary Reliever" : "";
+}
+
+/**
  * The day a reliever's contract ran out, if that day has passed.
  *
  * A reliever engagement ends on a date agreed up front, and nobody files a resignation
@@ -88,7 +107,8 @@ export const RELIEVER_CONTRACT_ENDED_REASON = "End of Contract (Reliever)";
  * milestone list is for.
  */
 export function relieverContractEnded(e: Employee, now: Date = new Date()): string | null {
-  if (!e.isReliever || !e.relieverEndDate) return null;
+  // An absorbed reliever stays on past the old contract end: it no longer ends anything.
+  if (!isTemporaryReliever(e) || !e.relieverEndDate) return null;
   const end = new Date(e.relieverEndDate);
   if (Number.isNaN(end.getTime())) return null;
   return end.getTime() <= now.getTime() ? e.relieverEndDate : null;
