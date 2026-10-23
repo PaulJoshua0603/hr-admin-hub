@@ -1469,11 +1469,12 @@ type FilterRow = {
   replacedName?: string;
   replacedReason?: string;
   replacedPosition?: string;
-  /** Only on a Reliever Contract row: their onboarding date and their own milestones. */
+  /** Temporary Reliever: labelled as such wherever they appear in the milestone lists. */
+  isReliever?: boolean;
+  /** Only on a Reliever Contract row: their onboarding date and milestone dates. */
   hiredDate?: string;
   thirdDate?: string;
   sixthDate?: string;
-  oneYearDate?: string;
   contractEndDate?: string;
   /** Only on a Resigned row: why they left, when the system can say. */
   reason?: string;
@@ -1559,8 +1560,6 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
   const [milestoneType, setMilestoneType] = useState<MilestoneType>("birthday");
   // Grocery Package sits beside the milestone tabs but is not a dated milestone.
   const [showGrocery, setShowGrocery] = useState(false);
-  // Which reliever date the Reliever Contract view filters on.
-  const [relieverTrack, setRelieverTrack] = useState<"end" | "third" | "sixth" | "oneYear">("end");
   const today = new Date();
   const [preset, setPreset] = useState<TimeframePreset>("month");
   const [startDate, setStartDate] = useState(startOfMonthISO(today));
@@ -1746,44 +1745,33 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
   const separationDate = (e: Employee) => separationDateOf(e, coeIndex);
 
   /**
-   * Relievers still on their engagement, with their own 3rd Month / 6th Month / 1 Year
-   * dates kept here rather than in the regular milestone lists. `relieverTrack` picks
-   * which of those dates the date range filters and sorts on. Shared by the screen and
-   * the export so both always list the same people.
+   * Every Temporary Reliever still on their engagement, whatever the date range (there
+   * are few of them and they should never drop out of sight), soonest contract end first
+   * and anyone without an end date last. Their 3rd Month, 6th Month and 1 Year milestones
+   * also appear in the regular lists, labelled. Shared by the screen and the export.
    */
   function relieverRows(): FilterRow[] {
     return employees
       .filter((e) => e.isReliever && separationDate(e) === null)
       .map((e) => {
-        const third = e.dateHired ? milestoneDateISO(e.dateHired, 3) : "";
-        const sixth = e.dateHired ? milestoneDateISO(e.dateHired, 6) : "";
-        const oneYear = e.dateHired ? milestoneDateISO(e.dateHired, 12) : "";
         const end = e.relieverEndDate ? new Date(e.relieverEndDate).toISOString() : "";
-        const tracked = { end, third, sixth, oneYear }[relieverTrack];
         return {
-          ...toFilterRow(e, tracked),
-          replacedName: e.replacedEmployeeName || "",
-          replacedReason: e.relieverReason || "",
-          replacedPosition: e.replacedPosition || "",
+          // Sorted on the contract end; no end date sorts last.
+          ...toFilterRow(e, end || "9999-12-31T00:00:00.000Z"),
+          isReliever: true,
           hiredDate: e.dateHired || "",
-          thirdDate: third,
-          sixthDate: sixth,
-          oneYearDate: oneYear,
+          thirdDate: e.dateHired ? milestoneDateISO(e.dateHired, 3) : "",
+          sixthDate: e.dateHired ? milestoneDateISO(e.dateHired, 6) : "",
           contractEndDate: end,
         };
-      })
-      .filter((r) => r.date && inRange(r.date, startDate, endDate))
-      .sort((a, b) => (a.date < b.date ? -1 : 1));
+      });
   }
 
   /** Reliever taken on as a regular employee: from here on they are tracked as one. */
   function markAbsorbed(row: FilterRow) {
     if (!window.confirm(`Mark ${row.name} as absorbed into a regular position?`)) return;
     updateEmployee(row.id, { isReliever: false, relieverAbsorbedDate: todayISO() });
-    notify(
-      `${row.name} is now a regular employee — their 3rd Month, 6th Month and 1 Year milestones move to the regular lists`,
-      "created"
-    );
+    notify(`${row.name} is now a regular employee — the Temporary Reliever label is removed`, "created");
   }
 
   function toFilterRow(e: Employee, date: string): FilterRow {
@@ -1832,9 +1820,9 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
     if (milestoneType === "relieverEnd") return relieverRows();
     const monthsMap: Record<MilestoneType, number> = { birthday: 0, relieverEnd: 0, third: 3, sixth: 6, oneYear: 12 };
     const months = monthsMap[milestoneType];
-    // Relievers are tracked under Reliever Contract until they are absorbed.
+    // Temporary Relievers are included, labelled (isReliever).
     return employees
-      .filter((e) => e.dateHired && !e.lastDay && !e.isReliever)
+      .filter((e) => e.dateHired && !e.lastDay)
       .map((e) => {
         const d = new Date(e.dateHired!);
         d.setMonth(d.getMonth() + months);
@@ -1846,6 +1834,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
           email: e.realcognitaEmail || "",
           supervisor: e.immediateSupervisor || "",
           date: d.toISOString(),
+          isReliever: !!e.isReliever,
         };
       })
       .filter((r) => inRange(r.date, startDate, endDate));
@@ -2015,7 +2004,9 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
        * the rest.
        */
       const sheetTitle = (monthLabel: string) =>
-        isSixth
+        isReliever
+          ? "Temporary Relievers"
+          : isSixth
           ? `${monthLabel} Regular Employees`
           : isThird
             ? `${monthLabel} ${MILESTONE_LABELS[type]} Assessment`
@@ -2035,18 +2026,25 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
             ]
           : isBirthday
             ? ["No.", "Employee Name", "Position", "Department", "Email", "Birthday", "Notes"]
-            : [
+            : isReliever
+              ? [
+                  "Employee Name",
+                  "Position",
+                  "Department",
+                  "Immediate Supervisor",
+                  "Hire/Onboarding Date",
+                  "3rd Month Milestone Date",
+                  "6th Month Milestone Date",
+                  "Contract End Date",
+                  "Notes",
+                ]
+              : [
               "Employee Name",
               "Position",
               "Department",
               "Immediate Supervisor",
               "Email",
-              ...(isReliever
-                ? ["Employee Being Replaced", "Reason for Replacement", "Position Being Replaced"]
-                : []),
-              ...(isReliever
-                ? ["Hiring/Onboarding Date", "3rd Month", "6th Month", "1 Year", "Reliever Contract End Date"]
-                : [MILESTONE_LABELS[type]]),
+              MILESTONE_LABELS[type],
               "Notes",
             ];
 
@@ -2064,7 +2062,22 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
         return [NOT_SET_LABEL, ""];
       }
 
+      /** "Sibal, Eren Mae I. (Temporary Reliever)" in the regular milestone sheets. */
+      const nameCell = (r: FilterRow) => (r.isReliever ? `${r.name} (Temporary Reliever)` : r.name);
+
       function rowFor(r: FilterRow, index: number): (string | number)[] {
+        if (isReliever) {
+          return [
+            r.name,
+            r.position,
+            r.department,
+            r.supervisor,
+            ...[r.hiredDate, r.thirdDate, r.sixthDate, r.contractEndDate].map((d) =>
+              d ? formatDate(d, "MMMM d, yyyy") : ""
+            ),
+            noteFor(r.id, type),
+          ];
+        }
         if (isBirthday) {
           return [
             index + 1,
@@ -2077,7 +2090,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
           ];
         }
         if (isThird) {
-          return [r.name, r.position, r.department, r.supervisor, formatDate(r.date, "MMMM d, yyyy")];
+          return [nameCell(r), r.position, r.department, r.supervisor, formatDate(r.date, "MMMM d, yyyy")];
         }
         if (isSixth) {
           const [status, percent] = salaryCells(r.id);
@@ -2085,7 +2098,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
           // The "New Total Monthly Gross" from the employee's milestone; blank when none.
           const newGross = employee ? regularizationNewGross(employee) : null;
           return [
-            r.name,
+            nameCell(r),
             r.position,
             r.department,
             status,
@@ -2095,19 +2108,12 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
           ];
         }
         return [
-          r.name,
+          nameCell(r),
           r.position,
           r.department,
           r.supervisor,
           r.email,
-          ...(isReliever
-            ? [r.replacedName || "", r.replacedReason || "", r.replacedPosition || ""]
-            : []),
-          ...(isReliever
-            ? [r.hiredDate, r.thirdDate, r.sixthDate, r.oneYearDate, r.contractEndDate].map((d) =>
-                d ? formatDate(d, "MMMM d, yyyy") : ""
-              )
-            : [formatDate(r.displayDate || r.date, "MMMM d, yyyy")]),
+          formatDate(r.displayDate || r.date, "MMMM d, yyyy"),
           noteFor(r.id, type),
         ];
       }
@@ -2188,7 +2194,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
           oneYear: 12,
         };
         return employees
-          .filter((e) => e.dateHired && !e.lastDay && !e.isReliever)
+          .filter((e) => e.dateHired && !e.lastDay)
           .map((e) => {
             const d = new Date(e.dateHired!);
             d.setMonth(d.getMonth() + monthsMap[kind]);
@@ -2200,6 +2206,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
               email: e.realcognitaEmail || "",
               supervisor: e.immediateSupervisor || "",
               date: d.toISOString(),
+              isReliever: !!e.isReliever,
             };
           })
           .filter((r) => inRange(r.date, startDate, endDate))
@@ -2210,7 +2217,9 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
       // inside one month therefore produces one sheet, not twelve empty ones.
       const rows = computeRowsFor(type);
       const months = new Map<string, FilterRow[]>();
-      rows.forEach((r) => {
+      // Temporary Relievers go on one sheet: that list is not tied to the date range.
+      if (isReliever) months.set("relievers", rows);
+      else rows.forEach((r) => {
         const key = format(new Date(r.date), "yyyy-MM");
         const list = months.get(key);
         if (list) list.push(r);
@@ -2223,6 +2232,10 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
         buildSheet(format(new Date(startDate), "MMMM yyyy"), format(new Date(startDate), "MMMM yyyy"), []);
       } else {
         [...months.keys()].sort().forEach((key) => {
+          if (key === "relievers") {
+            buildSheet("", "Temporary Relievers", rows);
+            return;
+          }
           const label = format(new Date(`${key}-01T00:00:00`), "MMMM yyyy");
           buildSheet(label, label, months.get(key) || []);
         });
@@ -2402,39 +2415,13 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                 </div>
               )}
 
-              {isRelieverView && (
-                <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-ink-muted">
-                  <span>Date range applies to:</span>
-                  <div className="flex gap-1 rounded-lg bg-background p-1">
-                    {([
-                      { id: "end" as const, label: "Contract End" },
-                      { id: "third" as const, label: "3rd Month" },
-                      { id: "sixth" as const, label: "6th Month" },
-                      { id: "oneYear" as const, label: "1 Year" },
-                    ]).map((t) => (
-                      <button
-                        key={t.id}
-                        onClick={() => setRelieverTrack(t.id)}
-                        className={`rounded-md px-3 py-1 font-medium transition-colors ${
-                          relieverTrack === t.id ? "bg-surface text-accent shadow-sm" : "hover:text-ink"
-                        }`}
-                      >
-                        {t.label}
-                      </button>
-                    ))}
-                  </div>
-                  <span>
-                    Relievers keep their milestones here until marked Absorbed, then move to the
-                    regular 3rd Month, 6th Month and 1 Year lists.
-                  </span>
-                </div>
-              )}
-
               <p className="mt-4 text-sm font-medium text-ink">Total Employees: {rows.length}</p>
 
               {rows.length === 0 ? (
                 <div className="mt-2 rounded-lg border border-dashed border-border p-6 text-center text-sm text-ink-muted">
-                  No matching records for this filter and date range.
+                  {isRelieverView
+                    ? "No Temporary Relievers right now."
+                    : "No matching records for this filter and date range."}
                 </div>
               ) : (
                 <div className="mt-2 overflow-x-auto rounded-lg border border-border">
@@ -2445,24 +2432,18 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                         <th className="px-3 py-2">Position</th>
                         <th className="px-3 py-2">Department</th>
                         <th className="px-3 py-2">Immediate Supervisor</th>
-                        <th className="px-3 py-2">Email</th>
-                        {isRelieverView && (
-                          <>
-                            <th className="px-3 py-2">Employee Being Replaced</th>
-                            <th className="px-3 py-2">Reason for Replacement</th>
-                            <th className="px-3 py-2">Position Being Replaced</th>
-                          </>
-                        )}
                         {isRelieverView ? (
                           <>
-                            <th className="px-3 py-2">Hiring/Onboarding Date</th>
-                            <th className="px-3 py-2">3rd Month</th>
-                            <th className="px-3 py-2">6th Month</th>
-                            <th className="px-3 py-2">1 Year</th>
-                            <th className="px-3 py-2">Reliever Contract End Date</th>
+                            <th className="px-3 py-2">Hire/Onboarding Date</th>
+                            <th className="px-3 py-2">3rd Month Milestone Date</th>
+                            <th className="px-3 py-2">6th Month Milestone Date</th>
+                            <th className="px-3 py-2">Contract End Date</th>
                           </>
                         ) : (
-                          <th className="px-3 py-2">{dateColumnLabel}</th>
+                          <>
+                            <th className="px-3 py-2">Email</th>
+                            <th className="px-3 py-2">{dateColumnLabel}</th>
+                          </>
                         )}
                         {isMilestoneView && <th className="px-3 py-2">Notes</th>}
                         {isRelieverView && <th className="px-3 py-2">Absorbed</th>}
@@ -2484,39 +2465,33 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                             <Link href={`/employees/${r.id}`} className="hover:text-accent">
                               {r.name}
                             </Link>
+                            {r.isReliever && (
+                              <span className="ml-2 inline-flex whitespace-nowrap rounded-full bg-warn-soft px-2 py-0.5 text-[11px] font-medium text-warn ring-1 ring-warn/20">
+                                Temporary Reliever
+                              </span>
+                            )}
                           </td>
                           <td className="px-3 py-2 text-ink-muted">{r.position || "—"}</td>
                           <td className="px-3 py-2 text-ink-muted">{r.department || "—"}</td>
                           <td className="px-3 py-2 text-ink-muted">{r.supervisor || "—"}</td>
-                          <td className="px-3 py-2 text-ink-muted">{r.email || "—"}</td>
-                          {isRelieverView && (
-                            <>
-                              <td className="px-3 py-2 text-ink-muted">{r.replacedName || "—"}</td>
-                              <td className="px-3 py-2 text-ink-muted">{r.replacedReason || "—"}</td>
-                              <td className="px-3 py-2 text-ink-muted">{r.replacedPosition || "—"}</td>
-                            </>
-                          )}
                           {isRelieverView ? (
                             [
                               { key: "hired", value: r.hiredDate },
                               { key: "third", value: r.thirdDate },
                               { key: "sixth", value: r.sixthDate },
-                              { key: "oneYear", value: r.oneYearDate },
                               { key: "end", value: r.contractEndDate },
                             ].map((c) => (
-                              <td
-                                key={c.key}
-                                className={`whitespace-nowrap px-3 py-2 ${
-                                  c.key === relieverTrack ? "font-medium text-ink" : "text-ink-muted"
-                                }`}
-                              >
+                              <td key={c.key} className="whitespace-nowrap px-3 py-2 text-ink-muted">
                                 {c.value ? formatDate(c.value, "MMMM d, yyyy") : "—"}
                               </td>
                             ))
                           ) : (
-                            <td className="px-3 py-2 text-ink-muted">
-                              {formatDate(r.displayDate || r.date, "MMMM d, yyyy")}
-                            </td>
+                            <>
+                              <td className="px-3 py-2 text-ink-muted">{r.email || "—"}</td>
+                              <td className="px-3 py-2 text-ink-muted">
+                                {formatDate(r.displayDate || r.date, "MMMM d, yyyy")}
+                              </td>
+                            </>
                           )}
                           {isMilestoneView && (
                             <td className="px-3 py-2">
