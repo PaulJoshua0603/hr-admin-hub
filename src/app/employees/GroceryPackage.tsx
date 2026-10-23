@@ -404,9 +404,9 @@ export default function GroceryPackage({
       {editingClients && (
         <div className="mt-3 rounded-lg border border-border bg-background p-3">
           <p className="mb-2 text-xs text-ink-muted">
-            Type the client each team works for — everyone on the team takes it, and it shows on
-            their Employee details. Saved as you leave each box. Employees whose department has
-            no team keep the Client on their own record.
+            Type the client each team works for — everyone on the team takes it unless a Client is
+            filled in on their own Employee details, which wins for that person. Saved as you
+            leave each box.
           </p>
           <datalist id="grocery-client-names">
             {uniqueSorted([...clients.values()].filter(Boolean)).map((c) => (

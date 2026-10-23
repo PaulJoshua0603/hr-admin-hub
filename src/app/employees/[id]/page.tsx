@@ -684,20 +684,19 @@ export default function EmployeeDetailPage({
             />
           </FieldGroup>
           <FieldGroup label="Client">
-            {employeeTeam ? (
-              <Input
-                value={teamClient}
-                placeholder="No client set for this team"
-                disabled
-                title={`Set for ${employeeTeam.team} under Grocery Package → Set Team → Client`}
-              />
-            ) : (
-              <Input
-                value={employee.client || ""}
-                disabled={!isEditing}
-                onChange={(e) => update(employee.id, { client: e.target.value })}
-              />
-            )}
+            {/* Editable for everyone. Left empty, the team's client applies (shown as the
+                placeholder); anything typed here is this employee's own and wins. */}
+            <Input
+              value={employee.client || ""}
+              disabled={!isEditing}
+              placeholder={teamClient ? `${teamClient} (from team)` : "Client"}
+              title={
+                employeeTeam
+                  ? `Leave empty to use ${employeeTeam.team}'s client${teamClient ? ` (${teamClient})` : ""}`
+                  : undefined
+              }
+              onChange={(e) => update(employee.id, { client: e.target.value })}
+            />
           </FieldGroup>
           <FieldGroup label="Team">
             <TeamPicker

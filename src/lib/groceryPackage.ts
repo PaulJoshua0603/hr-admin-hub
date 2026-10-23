@@ -137,14 +137,15 @@ export function teamClientMap(saved: TeamClient[]): Map<string, string> {
 export const NO_CLIENT = "No client set";
 
 /**
- * An employee's client: their team's, so everyone on a team stays with the same client
- * (a Client typed on one member's record never splits them off); only someone with no
- * team at all uses the Client on their own record.
+ * An employee's client: the Client on their own record when one is filled in (editable in
+ * Employee details), otherwise their team's — so a team shares one client by default and
+ * any individual can still be set apart.
  */
 export function clientOf(e: Employee, clients: Map<string, string>): string {
+  const own = (e.client || "").trim();
+  if (own) return own;
   const team = teamOf(e);
-  if (team) return clients.get(team.team) || NO_CLIENT;
-  return (e.client || "").trim() || NO_CLIENT;
+  return (team && clients.get(team.team)) || NO_CLIENT;
 }
 
 /** "Est 1 - Res", "EST 1-RES" and "est1 res" are the same department. */

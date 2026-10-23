@@ -1091,8 +1091,19 @@ export default function EmployeesPage() {
             No employees added yet.
           </div>
         )}
+        {/* Most recent hiring/onboarding date first; anyone without one goes last, newest
+            added first among them. */}
         {[...employees]
-          .sort((a, b) => (a.dateAdded < b.dateAdded ? 1 : a.dateAdded > b.dateAdded ? -1 : 0))
+          .sort((a, b) => {
+            const ha = (a.dateHired || "").slice(0, 10);
+            const hb = (b.dateHired || "").slice(0, 10);
+            if (ha !== hb) {
+              if (!ha) return 1;
+              if (!hb) return -1;
+              return ha < hb ? 1 : -1;
+            }
+            return a.dateAdded < b.dateAdded ? 1 : a.dateAdded > b.dateAdded ? -1 : 0;
+          })
           .map((e) => {
           const status = statusOf(e);
           const missingCritical = getMissingCriticalItems(e);
@@ -1246,11 +1257,62 @@ async function exportEmployeeCounts(
   const probationTotal = probationSheet.addRow([`Total: ${probationary.length}`]);
   probationTotal.getCell(1).font = { bold: true };
 
-  // Resigned Employees.
+  // Resigned Employees: grouped by month of resignation, earliest month first, each month
+  // under a yellow heading, numbered within it and closed with its own total. Anyone with
+  // no resignation date on record comes last, in a group of their own.
   const resignedSheet = wb.addWorksheet("Resigned Employees");
-  addRows(resignedSheet, resigned, "Date Hired", "Date of Resignation");
-  resignedSheet.addRow([]);
-  const resignedTotal = resignedSheet.addRow([`Total: ${resigned.length}`]);
+  const resignedColumns = [
+    { header: "No.", width: 6 },
+    ...BASE_COLUMNS,
+    { header: "Date Hired", width: 18 },
+    { header: "Date of Resignation", width: 20 },
+  ];
+  resignedSheet.columns = resignedColumns.map((c) => ({ width: c.width }));
+  const resignedHeader = resignedSheet.addRow(resignedColumns.map((c) => c.header));
+  resignedHeader.eachCell((c) => {
+    c.font = { bold: true, color: { argb: "FFFFFFFF" } };
+    c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0E5E56" } };
+  });
+
+  const resignedByMonth = new Map<string, { e: Employee; day: string }[]>();
+  resigned.forEach((e) => {
+    const day = (separationDateOf(e, coeIndex) || "").slice(0, 10);
+    const key = day ? day.slice(0, 7) : "none";
+    resignedByMonth.set(key, [...(resignedByMonth.get(key) || []), { e, day }]);
+  });
+  const monthKeys = [...resignedByMonth.keys()].sort((a, b) =>
+    a === "none" ? 1 : b === "none" ? -1 : a < b ? -1 : 1
+  );
+  monthKeys.forEach((key) => {
+    const people = resignedByMonth
+      .get(key)!
+      .sort((a, b) => (a.day !== b.day ? (a.day < b.day ? -1 : 1) : bySurname(a.e, b.e)));
+    const label =
+      key === "none"
+        ? "NO RESIGNATION DATE"
+        : format(new Date(`${key}-01T00:00:00`), "MMMM yyyy").toUpperCase();
+    const heading = resignedSheet.addRow([label]);
+    resignedSheet.mergeCells(heading.number, 1, heading.number, resignedColumns.length);
+    heading.getCell(1).font = { bold: true };
+    heading.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFFF00" } };
+
+    people.forEach(({ e, day }, i) => {
+      resignedSheet.addRow([
+        i + 1,
+        e.companyIdNumber || "",
+        filingName(e),
+        ...nameColumns(e),
+        e.department || "",
+        e.immediateSupervisor || "",
+        e.dateHired ? formatDate(e.dateHired, "MMMM d, yyyy") : "",
+        day ? formatDate(`${day}T00:00:00.000Z`, "MMMM dd, yyyy") : "",
+      ]);
+    });
+    const monthTotal = resignedSheet.addRow([`TOTAL: ${people.length}`]);
+    monthTotal.getCell(1).font = { bold: true };
+    resignedSheet.addRow([]);
+  });
+  const resignedTotal = resignedSheet.addRow([`Total Resigned: ${resigned.length}`]);
   resignedTotal.getCell(1).font = { bold: true };
 
   const buffer = await wb.xlsx.writeBuffer();
@@ -1407,6 +1469,12 @@ type FilterRow = {
   replacedName?: string;
   replacedReason?: string;
   replacedPosition?: string;
+  /** Only on a Reliever Contract row: their onboarding date and their own milestones. */
+  hiredDate?: string;
+  thirdDate?: string;
+  sixthDate?: string;
+  oneYearDate?: string;
+  contractEndDate?: string;
   /** Only on a Resigned row: why they left, when the system can say. */
   reason?: string;
   /**
@@ -1422,6 +1490,13 @@ type FilterRow = {
  * converting back lands on the previous day anywhere east of UTC, which is how a 28
  * September birthday was showing as the 27th.
  */
+/** A milestone N months after the hire date, the same way the regular milestone lists count it. */
+function milestoneDateISO(dateHired: string, months: number): string {
+  const d = new Date(dateHired);
+  d.setMonth(d.getMonth() + months);
+  return d.toISOString();
+}
+
 function birthdayThisYear(birthday: string, year: number): string {
   const b = new Date(birthday);
   return new Date(Date.UTC(year, b.getUTCMonth(), b.getUTCDate())).toISOString();
@@ -1484,6 +1559,8 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
   const [milestoneType, setMilestoneType] = useState<MilestoneType>("birthday");
   // Grocery Package sits beside the milestone tabs but is not a dated milestone.
   const [showGrocery, setShowGrocery] = useState(false);
+  // Which reliever date the Reliever Contract view filters on.
+  const [relieverTrack, setRelieverTrack] = useState<"end" | "third" | "sixth" | "oneYear">("end");
   const today = new Date();
   const [preset, setPreset] = useState<TimeframePreset>("month");
   const [startDate, setStartDate] = useState(startOfMonthISO(today));
@@ -1668,6 +1745,47 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
 
   const separationDate = (e: Employee) => separationDateOf(e, coeIndex);
 
+  /**
+   * Relievers still on their engagement, with their own 3rd Month / 6th Month / 1 Year
+   * dates kept here rather than in the regular milestone lists. `relieverTrack` picks
+   * which of those dates the date range filters and sorts on. Shared by the screen and
+   * the export so both always list the same people.
+   */
+  function relieverRows(): FilterRow[] {
+    return employees
+      .filter((e) => e.isReliever && separationDate(e) === null)
+      .map((e) => {
+        const third = e.dateHired ? milestoneDateISO(e.dateHired, 3) : "";
+        const sixth = e.dateHired ? milestoneDateISO(e.dateHired, 6) : "";
+        const oneYear = e.dateHired ? milestoneDateISO(e.dateHired, 12) : "";
+        const end = e.relieverEndDate ? new Date(e.relieverEndDate).toISOString() : "";
+        const tracked = { end, third, sixth, oneYear }[relieverTrack];
+        return {
+          ...toFilterRow(e, tracked),
+          replacedName: e.replacedEmployeeName || "",
+          replacedReason: e.relieverReason || "",
+          replacedPosition: e.replacedPosition || "",
+          hiredDate: e.dateHired || "",
+          thirdDate: third,
+          sixthDate: sixth,
+          oneYearDate: oneYear,
+          contractEndDate: end,
+        };
+      })
+      .filter((r) => r.date && inRange(r.date, startDate, endDate))
+      .sort((a, b) => (a.date < b.date ? -1 : 1));
+  }
+
+  /** Reliever taken on as a regular employee: from here on they are tracked as one. */
+  function markAbsorbed(row: FilterRow) {
+    if (!window.confirm(`Mark ${row.name} as absorbed into a regular position?`)) return;
+    updateEmployee(row.id, { isReliever: false, relieverAbsorbedDate: todayISO() });
+    notify(
+      `${row.name} is now a regular employee — their 3rd Month, 6th Month and 1 Year milestones move to the regular lists`,
+      "created"
+    );
+  }
+
   function toFilterRow(e: Employee, date: string): FilterRow {
     return {
       id: e.id,
@@ -1682,8 +1800,9 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
 
   const rows: FilterRow[] = (() => {
     if (category === "newHires") {
+      // Active only: anyone who has since resigned drops off, whatever their hire date.
       return employees
-        .filter((e) => e.dateHired && inRange(e.dateHired, startDate, endDate))
+        .filter((e) => e.dateHired && inRange(e.dateHired, startDate, endDate) && separationDate(e) === null)
         .map((e) => ({
           id: e.id,
           name: e.name,
@@ -1710,28 +1829,12 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
           displayDate: e.birthday,
         }));
     }
-    if (milestoneType === "relieverEnd") {
-      // Driven by the date entered on the reliever engagement, not by the hire date.
-      return employees
-        .filter((e) => e.isReliever && e.relieverEndDate && !e.lastDay)
-        .map((e) => ({
-          id: e.id,
-          name: e.name,
-          position: e.position || "",
-          department: e.department || "",
-          email: e.realcognitaEmail || "",
-          supervisor: e.immediateSupervisor || "",
-          date: new Date(e.relieverEndDate!).toISOString(),
-          replacedName: e.replacedEmployeeName || "",
-          replacedReason: e.relieverReason || "",
-          replacedPosition: e.replacedPosition || "",
-        }))
-        .filter((r) => inRange(r.date, startDate, endDate));
-    }
+    if (milestoneType === "relieverEnd") return relieverRows();
     const monthsMap: Record<MilestoneType, number> = { birthday: 0, relieverEnd: 0, third: 3, sixth: 6, oneYear: 12 };
     const months = monthsMap[milestoneType];
+    // Relievers are tracked under Reliever Contract until they are absorbed.
     return employees
-      .filter((e) => e.dateHired && !e.lastDay)
+      .filter((e) => e.dateHired && !e.lastDay && !e.isReliever)
       .map((e) => {
         const d = new Date(e.dateHired!);
         d.setMonth(d.getMonth() + months);
@@ -1823,7 +1926,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
       });
 
       const newHires = employees
-        .filter((e) => e.dateHired && inRange(e.dateHired, startDate, endDate))
+        .filter((e) => e.dateHired && inRange(e.dateHired, startDate, endDate) && separationDate(e) === null)
         .sort((a, b) => (a.dateHired! < b.dateHired! ? -1 : a.dateHired! > b.dateHired! ? 1 : 0));
 
       // Everyone hired on the same day forms one block: "No." (how many started that
@@ -1941,7 +2044,9 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
               ...(isReliever
                 ? ["Employee Being Replaced", "Reason for Replacement", "Position Being Replaced"]
                 : []),
-              isReliever ? "Reliever Contract End Date" : MILESTONE_LABELS[type],
+              ...(isReliever
+                ? ["Hiring/Onboarding Date", "3rd Month", "6th Month", "1 Year", "Reliever Contract End Date"]
+                : [MILESTONE_LABELS[type]]),
               "Notes",
             ];
 
@@ -1998,7 +2103,11 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
           ...(isReliever
             ? [r.replacedName || "", r.replacedReason || "", r.replacedPosition || ""]
             : []),
-          formatDate(r.displayDate || r.date, "MMMM d, yyyy"),
+          ...(isReliever
+            ? [r.hiredDate, r.thirdDate, r.sixthDate, r.oneYearDate, r.contractEndDate].map((d) =>
+                d ? formatDate(d, "MMMM d, yyyy") : ""
+              )
+            : [formatDate(r.displayDate || r.date, "MMMM d, yyyy")]),
           noteFor(r.id, type),
         ];
       }
@@ -2070,18 +2179,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
             .filter((r) => inRange(r.date, startDate, endDate))
             .sort((a, b) => (a.date < b.date ? -1 : 1));
         }
-        if (kind === "relieverEnd") {
-          return employees
-            .filter((e) => e.isReliever && e.relieverEndDate && !e.lastDay)
-            .map((e) => ({
-              ...toFilterRow(e, new Date(e.relieverEndDate!).toISOString()),
-              replacedName: e.replacedEmployeeName || "",
-              replacedReason: e.relieverReason || "",
-              replacedPosition: e.replacedPosition || "",
-            }))
-            .filter((r) => inRange(r.date, startDate, endDate))
-            .sort((a, b) => (a.date < b.date ? -1 : 1));
-        }
+        if (kind === "relieverEnd") return relieverRows();
         const monthsMap: Record<MilestoneType, number> = {
           birthday: 0,
           relieverEnd: 0,
@@ -2090,7 +2188,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
           oneYear: 12,
         };
         return employees
-          .filter((e) => e.dateHired && !e.lastDay)
+          .filter((e) => e.dateHired && !e.lastDay && !e.isReliever)
           .map((e) => {
             const d = new Date(e.dateHired!);
             d.setMonth(d.getMonth() + monthsMap[kind]);
@@ -2304,6 +2402,34 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                 </div>
               )}
 
+              {isRelieverView && (
+                <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-ink-muted">
+                  <span>Date range applies to:</span>
+                  <div className="flex gap-1 rounded-lg bg-background p-1">
+                    {([
+                      { id: "end" as const, label: "Contract End" },
+                      { id: "third" as const, label: "3rd Month" },
+                      { id: "sixth" as const, label: "6th Month" },
+                      { id: "oneYear" as const, label: "1 Year" },
+                    ]).map((t) => (
+                      <button
+                        key={t.id}
+                        onClick={() => setRelieverTrack(t.id)}
+                        className={`rounded-md px-3 py-1 font-medium transition-colors ${
+                          relieverTrack === t.id ? "bg-surface text-accent shadow-sm" : "hover:text-ink"
+                        }`}
+                      >
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+                  <span>
+                    Relievers keep their milestones here until marked Absorbed, then move to the
+                    regular 3rd Month, 6th Month and 1 Year lists.
+                  </span>
+                </div>
+              )}
+
               <p className="mt-4 text-sm font-medium text-ink">Total Employees: {rows.length}</p>
 
               {rows.length === 0 ? (
@@ -2327,8 +2453,19 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                             <th className="px-3 py-2">Position Being Replaced</th>
                           </>
                         )}
-                        <th className="px-3 py-2">{dateColumnLabel}</th>
+                        {isRelieverView ? (
+                          <>
+                            <th className="px-3 py-2">Hiring/Onboarding Date</th>
+                            <th className="px-3 py-2">3rd Month</th>
+                            <th className="px-3 py-2">6th Month</th>
+                            <th className="px-3 py-2">1 Year</th>
+                            <th className="px-3 py-2">Reliever Contract End Date</th>
+                          </>
+                        ) : (
+                          <th className="px-3 py-2">{dateColumnLabel}</th>
+                        )}
                         {isMilestoneView && <th className="px-3 py-2">Notes</th>}
+                        {isRelieverView && <th className="px-3 py-2">Absorbed</th>}
                         {milestoneType === "third" && isMilestoneView && (
                           <th className="px-3 py-2">Performance Evaluation</th>
                         )}
@@ -2359,9 +2496,28 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                               <td className="px-3 py-2 text-ink-muted">{r.replacedPosition || "—"}</td>
                             </>
                           )}
-                          <td className="px-3 py-2 text-ink-muted">
-                            {formatDate(r.displayDate || r.date, "MMMM d, yyyy")}
-                          </td>
+                          {isRelieverView ? (
+                            [
+                              { key: "hired", value: r.hiredDate },
+                              { key: "third", value: r.thirdDate },
+                              { key: "sixth", value: r.sixthDate },
+                              { key: "oneYear", value: r.oneYearDate },
+                              { key: "end", value: r.contractEndDate },
+                            ].map((c) => (
+                              <td
+                                key={c.key}
+                                className={`whitespace-nowrap px-3 py-2 ${
+                                  c.key === relieverTrack ? "font-medium text-ink" : "text-ink-muted"
+                                }`}
+                              >
+                                {c.value ? formatDate(c.value, "MMMM d, yyyy") : "—"}
+                              </td>
+                            ))
+                          ) : (
+                            <td className="px-3 py-2 text-ink-muted">
+                              {formatDate(r.displayDate || r.date, "MMMM d, yyyy")}
+                            </td>
+                          )}
                           {isMilestoneView && (
                             <td className="px-3 py-2">
                               {milestoneType === "sixth" ? (
@@ -2392,6 +2548,18 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                                   className="min-w-[160px]"
                                 />
                               )}
+                            </td>
+                          )}
+                          {isRelieverView && (
+                            <td className="px-3 py-2">
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                onClick={() => markAbsorbed(r)}
+                                title="Taken on as a regular employee: moves their 3rd Month, 6th Month and 1 Year to the regular milestone lists"
+                              >
+                                Mark Absorbed
+                              </Button>
                             </td>
                           )}
                           {milestoneType === "third" && isMilestoneView && (
