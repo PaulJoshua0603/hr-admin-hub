@@ -19,6 +19,7 @@ import { useNotifications } from "@/lib/notificationContext";
 import { addDaysISO, addMonthsISO, daysSince, formatDate, isOverdue, nextMondayISO, todayISO } from "@/lib/dates";
 import {
   exportContractOfEmploymentDocx,
+  exportEmployeeInfoSlipDocx,
   exportEndorsementLetterDocx,
   exportRelieverContractDocx,
   exportRequirementsListDocx,
@@ -985,6 +986,20 @@ export default function EmployeeDetailPage({
               <option value="Male">Male</option>
             </select>
           </FieldGroup>
+          <FieldGroup label="Status">
+            <select
+              value={employee.civilStatus || ""}
+              disabled={!isEditing}
+              onChange={(e) => update(employee.id, { civilStatus: e.target.value || undefined })}
+              className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-accent disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <option value="">Select…</option>
+              <option value="Single">Single</option>
+              <option value="Married">Married</option>
+              <option value="Widowed">Widowed</option>
+              <option value="Separated">Separated</option>
+            </select>
+          </FieldGroup>
           <FieldGroup label="Working Hours">
             <select
               value={employee.workingHours || ""}
@@ -1078,6 +1093,56 @@ export default function EmployeeDetailPage({
               value={employee.emergencyContactPhone || ""}
               disabled={!isEditing}
               onChange={(e) => update(employee.id, { emergencyContactPhone: e.target.value })}
+            />
+          </FieldGroup>
+        </div>
+      </Card>
+
+      <Card className="mb-6">
+        <h2 className="font-display text-lg text-ink">Educational Background</h2>
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <FieldGroup label="Education Level">
+            <select
+              value={employee.educationLevel || ""}
+              disabled={!isEditing}
+              onChange={(e) => update(employee.id, { educationLevel: e.target.value || undefined })}
+              className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-accent disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <option value="">Select…</option>
+              <option value="High School Graduate">High School Graduate</option>
+              <option value="Senior High School Graduate">Senior High School Graduate</option>
+              <option value="College Graduate">College Graduate</option>
+            </select>
+          </FieldGroup>
+          <FieldGroup label="School Name">
+            <Input
+              value={employee.schoolName || ""}
+              disabled={!isEditing}
+              onChange={(e) => update(employee.id, { schoolName: e.target.value })}
+            />
+          </FieldGroup>
+          <FieldGroup label="Start Year">
+            <Input
+              type="number"
+              inputMode="numeric"
+              min={1950}
+              max={new Date().getFullYear() + 6}
+              placeholder="e.g. 2016"
+              value={employee.schoolStartYear || ""}
+              disabled={!isEditing}
+              onChange={(e) => update(employee.id, { schoolStartYear: e.target.value.slice(0, 4) })}
+            />
+          </FieldGroup>
+          <FieldGroup label="End Year">
+            <Input
+              type="number"
+              inputMode="numeric"
+              min={1950}
+              max={new Date().getFullYear() + 6}
+              placeholder="e.g. 2020"
+              value={employee.schoolEndYear || ""}
+              disabled={!isEditing}
+              onChange={(e) => update(employee.id, { schoolEndYear: e.target.value.slice(0, 4) })}
             />
           </FieldGroup>
         </div>
@@ -1498,7 +1563,7 @@ export default function EmployeeDetailPage({
           {/* Four equal columns rather than three, so the set fills one tidy row instead of
               leaving an orphan on a second line. Buttons wrap their label and grow in height
               rather than stretching their column, which is what made the widths uneven. */}
-          <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
             <Button
               variant="ghost"
               className="w-full min-w-0 justify-center whitespace-normal text-center leading-snug h-auto py-2"
@@ -1593,6 +1658,16 @@ export default function EmployeeDetailPage({
               onClick={() => exportContractOfEmploymentDocx(employee)}
             >
               Contract of Employment (Word)
+            </Button>
+            <Button
+              variant="ghost"
+              className="w-full min-w-0 justify-center whitespace-normal text-center leading-snug h-auto py-2"
+              title="Printable slip with Full Name, Position, Department, Client, Immediate Supervisor and Applicant Type, to cut out"
+              onClick={() =>
+                exportEmployeeInfoSlipDocx(employee, { client: (employee.client || "").trim() || teamClient })
+              }
+            >
+              Employee Info Slip (Word)
             </Button>
           </div>
 

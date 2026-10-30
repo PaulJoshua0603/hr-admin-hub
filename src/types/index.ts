@@ -596,6 +596,15 @@ export type Employee = {
   homeAddress?: string;
   homeCity?: string; // city/municipality, filled separately for docx templates like "City, Philippines"
   gender?: string;
+  /** Civil status: Single, Married, Widowed or Separated. */
+  civilStatus?: string;
+  // Educational background
+  /** High School Graduate, Senior High School Graduate or College Graduate. */
+  educationLevel?: string;
+  schoolName?: string;
+  /** Four-digit years, kept as typed. */
+  schoolStartYear?: string;
+  schoolEndYear?: string;
   immediateSupervisor?: string;
   workingHours?: string;
   /** The client account the employee is placed on. */

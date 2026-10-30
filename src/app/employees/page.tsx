@@ -1141,7 +1141,9 @@ export default function EmployeesPage() {
               </Link>
               <div className="flex items-center gap-3">
                 <span className="text-xs text-ink-muted">
-                  Requirements due {formatDate(e.requirementsDeadline)}
+                  {e.dateHired
+                    ? `Hired/Onboarding: ${formatDate(e.dateHired, "MMMM d, yyyy")}`
+                    : "No hired/onboarding date"}
                 </span>
                 <Pill tone={isProfileComplete(e) ? "success" : "warn"}>
                   {isProfileComplete(e) ? "Profile complete" : "Profile incomplete"}

@@ -969,3 +969,118 @@ export async function exportEndorsementLetterDocx(employee: Employee) {
   const blob = await Packer.toBlob(doc);
   saveBlob(blob, `${employee.name} Endorsement Letter.docx`);
 }
+
+/**
+ * A printable Employee Information slip: the six details HR hands on, Calibri 12 inside a
+ * bordered box, with a dashed outer edge to cut along. Built from the employee record as
+ * it is saved, so it always matches the profile — nothing is typed in by hand.
+ */
+export async function exportEmployeeInfoSlipDocx(employee: Employee, details: { client: string }) {
+  const {
+    Document,
+    Packer,
+    Paragraph,
+    TextRun,
+    AlignmentType,
+    BorderStyle,
+    Table,
+    TableRow,
+    TableCell,
+    WidthType,
+    VerticalAlign,
+  } = await import("docx");
+
+  const FONT = "Calibri";
+  const SIZE = 24; // 12pt, in half-points
+  const LINE = { style: BorderStyle.SINGLE, size: 6, color: "808080" };
+  const CUT = { style: BorderStyle.DASHED, size: 12, color: "000000" };
+
+  const applicantType =
+    employee.applicantType === "new"
+      ? "New Applicant"
+      : employee.applicantType === "replacement"
+        ? "Replacement"
+        : "";
+  const fields: [string, string][] = [
+    ["Full Name", employee.name || ""],
+    ["Position", employee.position || ""],
+    ["Department", employee.department || ""],
+    ["Client", details.client],
+    ["Immediate Supervisor", employee.immediateSupervisor || ""],
+    ["Applicant Type", applicantType],
+  ];
+
+  const text = (value: string, bold = false) =>
+    new Paragraph({ children: [new TextRun({ text: value, bold, font: FONT, size: SIZE })] });
+  const cellMargins = { top: 120, bottom: 120, left: 160, right: 160 };
+
+  const detailsTable = new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    borders: {
+      top: LINE,
+      bottom: LINE,
+      left: LINE,
+      right: LINE,
+      insideHorizontal: LINE,
+      insideVertical: LINE,
+    },
+    rows: fields.map(
+      ([label, value]) =>
+        new TableRow({
+          cantSplit: true,
+          children: [
+            new TableCell({
+              width: { size: 35, type: WidthType.PERCENTAGE },
+              margins: cellMargins,
+              verticalAlign: VerticalAlign.CENTER,
+              children: [text(label, true)],
+            }),
+            new TableCell({
+              width: { size: 65, type: WidthType.PERCENTAGE },
+              margins: cellMargins,
+              verticalAlign: VerticalAlign.CENTER,
+              children: [text(value)],
+            }),
+          ],
+        })
+    ),
+  });
+
+  // The slip: a dashed box (the cut line) with generous padding around the title and table,
+  // so cutting along the dashes leaves a clean margin around the details.
+  const slip = new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    borders: { top: CUT, bottom: CUT, left: CUT, right: CUT, insideHorizontal: CUT, insideVertical: CUT },
+    rows: [
+      new TableRow({
+        cantSplit: true,
+        children: [
+          new TableCell({
+            margins: { top: 360, bottom: 360, left: 360, right: 360 },
+            children: [
+              new Paragraph({
+                alignment: AlignmentType.CENTER,
+                spacing: { after: 240 },
+                children: [new TextRun({ text: "EMPLOYEE INFORMATION", bold: true, font: FONT, size: SIZE })],
+              }),
+              detailsTable,
+            ],
+          }),
+        ],
+      }),
+    ],
+  });
+
+  const doc = new Document({
+    styles: { default: { document: { run: { font: FONT, size: SIZE } } } },
+    sections: [
+      {
+        properties: { page: { margin: { top: 1080, bottom: 1080, left: 1080, right: 1080 } } },
+        children: [slip],
+      },
+    ],
+  });
+
+  const blob = await Packer.toBlob(doc);
+  saveBlob(blob, `${employee.name} - Employee Information.docx`);
+}
