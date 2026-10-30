@@ -1472,7 +1472,21 @@ function EmployeeCountSummary({ employees }: { employees: Employee[] }) {
 }
 
 type FilterCategory = "milestones" | "newHires";
-type MilestoneType = "birthday" | "relieverEnd" | "third" | "sixth" | "oneYear";
+type MilestoneType = "birthday" | "relieverEnd" | "third" | "sixth" | "oneYear" | "twoYears" | "threeYears";
+
+/** Months after the Hired/Onboarding Date each milestone falls on (0: not counted from it). */
+const MILESTONE_MONTHS: Record<MilestoneType, number> = {
+  birthday: 0,
+  relieverEnd: 0,
+  third: 3,
+  sixth: 6,
+  oneYear: 12,
+  twoYears: 24,
+  threeYears: 36,
+};
+
+/** Employment anniversaries: exported like the screenshot reference, "November 2026 – 1 Year". */
+const ANNIVERSARIES: MilestoneType[] = ["oneYear", "twoYears", "threeYears"];
 type TimeframePreset = "week" | "month" | "year" | "custom";
 
 type FilterRow = {
@@ -1572,6 +1586,8 @@ const MILESTONE_LABELS: Record<MilestoneType, string> = {
   third: "3rd Month",
   sixth: "6th Month",
   oneYear: "1 Year",
+  twoYears: "2 Years",
+  threeYears: "3 Years",
 };
 
 function AdvancedFilterView({ employees }: { employees: Employee[] }) {
@@ -1866,11 +1882,12 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
         }));
     }
     if (milestoneType === "relieverEnd") return relieverRows();
-    const monthsMap: Record<MilestoneType, number> = { birthday: 0, relieverEnd: 0, third: 3, sixth: 6, oneYear: 12 };
-    const months = monthsMap[milestoneType];
+    const months = MILESTONE_MONTHS[milestoneType];
     // Relievers are included, labelled "Temporary Reliever" or "Absorbed".
+    // Current employees only (no last day, not resigned, no COE for Resigned), counted
+    // from their Hired/Onboarding Date.
     return employees
-      .filter((e) => e.dateHired && !e.lastDay)
+      .filter((e) => e.dateHired && separationDate(e) === null)
       .map((e) => {
         const d = new Date(e.dateHired!);
         d.setMonth(d.getMonth() + months);
@@ -2044,8 +2061,9 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
       const isSixth = type === "sixth";
       const isReliever = type === "relieverEnd";
       const isBirthday = type === "birthday";
-      // Birthday and 6th Month sheets get the centred title and the yellow total.
-      const isFormatted = isSixth || isBirthday;
+      const isAnniversary = ANNIVERSARIES.includes(type);
+      // Birthday, 6th Month and the 1 / 2 / 3 Year sheets get the centred title and yellow total.
+      const isFormatted = isSixth || isBirthday || isAnniversary;
 
       /**
        * What each sheet is called inside: "October 2026 Regular Employees" for the 6th
@@ -2059,7 +2077,9 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
           ? `${monthLabel} Regular Employees`
           : isThird
             ? `${monthLabel} ${MILESTONE_LABELS[type]} Assessment`
-            : `${monthLabel} ${MILESTONE_LABELS[type]}`;
+            : isAnniversary
+              ? `${monthLabel} – ${MILESTONE_LABELS[type]}`
+              : `${monthLabel} ${MILESTONE_LABELS[type]}`;
 
       const columns = isThird
         ? ["Employee Name", "Position", "Department", "Immediate Supervisor", "3rd Month Date"]
@@ -2094,7 +2114,8 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
               "Immediate Supervisor",
               "Email",
               MILESTONE_LABELS[type],
-              "Notes",
+              // The anniversary sheets end at the milestone date, as in the reference format.
+              ...(isAnniversary ? [] : ["Notes"]),
             ];
 
       /** The salary review as the export states it, straight off the employee record. */
@@ -2168,7 +2189,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
           r.supervisor,
           r.email,
           formatDate(r.displayDate || r.date, "MMMM d, yyyy"),
-          noteFor(r.id, type),
+          ...(isAnniversary ? [] : [noteFor(r.id, type)]),
         ];
       }
 
@@ -2240,18 +2261,11 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
             .sort((a, b) => (a.date < b.date ? -1 : 1));
         }
         if (kind === "relieverEnd") return relieverRows();
-        const monthsMap: Record<MilestoneType, number> = {
-          birthday: 0,
-          relieverEnd: 0,
-          third: 3,
-          sixth: 6,
-          oneYear: 12,
-        };
         return employees
-          .filter((e) => e.dateHired && !e.lastDay)
+          .filter((e) => e.dateHired && separationDate(e) === null)
           .map((e) => {
             const d = new Date(e.dateHired!);
-            d.setMonth(d.getMonth() + monthsMap[kind]);
+            d.setMonth(d.getMonth() + MILESTONE_MONTHS[kind]);
             return {
               id: e.id,
               name: e.name,
@@ -2397,6 +2411,8 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                   { id: "third" as const, label: "3rd Month" },
                   { id: "sixth" as const, label: "6th Month" },
                   { id: "oneYear" as const, label: "1 Year" },
+                  { id: "twoYears" as const, label: "2 Years" },
+                  { id: "threeYears" as const, label: "3 Years" },
                 ]).map((m) => (
                   <button
                     key={m.id}

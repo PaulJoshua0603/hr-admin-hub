@@ -374,7 +374,7 @@ export async function exportCOEWithPurposeDocx(
     `</w:r>${buildRun(possessivePronounFor(employee?.gender))}<w:r w:rsidR="00245C53"`
   );
 
-  zip.file(docPath, xml);
+  zip.file(docPath, withPesoFont(xml));
   const outBlob = await zip.generateAsync({
     type: "blob",
     mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -411,7 +411,7 @@ export async function exportCOEResignedDocx(employeeName: string, employee?: Emp
     buildRun(dateIssued),
   ]);
 
-  zip.file(docPath, xml);
+  zip.file(docPath, withPesoFont(xml));
   const outBlob = await zip.generateAsync({
     type: "blob",
     mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -481,7 +481,7 @@ export async function exportRegularizationWithIncreaseDocx(employee: Employee) {
     buildRunSmall(employee.name),
   ]);
 
-  zip.file(docPath, xml);
+  zip.file(docPath, withPesoFont(xml));
   const outBlob = await zip.generateAsync({
     type: "blob",
     mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -516,7 +516,7 @@ export async function exportRegularizationNoIncreaseDocx(employee: Employee) {
     buildRunSmall(employee.name),
   ]);
 
-  zip.file(docPath, xml);
+  zip.file(docPath, withPesoFont(xml));
   const outBlob = await zip.generateAsync({
     type: "blob",
     mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -562,6 +562,41 @@ function parseWorkingHours(shift?: string): [string, string] {
     return `${m[1]} ${m[2].toLowerCase()}.m.`;
   };
   return [toFormal(parts[0] || ""), toFormal(parts[1] || "")];
+}
+
+/** A font that has the ₱ glyph and sits well beside the contracts' Garamond. */
+const PESO_FONT = "Times New Roman";
+const PESO_RFONTS = `<w:rFonts w:ascii="${PESO_FONT}" w:eastAsia="${PESO_FONT}" w:hAnsi="${PESO_FONT}" w:cs="${PESO_FONT}"/>`;
+
+/**
+ * Garamond, which the contract templates are set in, has no ₱ — Word shows a box in its
+ * place. Every ₱ is moved into a run of its own set in PESO_FONT; the text around it keeps
+ * the template's font and formatting. A run with more than plain text in it (tabs, breaks)
+ * is switched to PESO_FONT whole rather than split, so nothing in it is lost.
+ */
+function withPesoFont(xml: string): string {
+  return xml.replace(/<w:r(?:\s[^>]*)?>(?:(?!<\/w:r>)[\s\S])*?<\/w:r>/g, (run) => {
+    if (!run.includes("₱")) return run;
+    const open = run.match(/^<w:r(?:\s[^>]*)?>/)![0];
+    const rPr = run.match(/<w:rPr>[\s\S]*?<\/w:rPr>/)?.[0] ?? "<w:rPr></w:rPr>";
+    const pesoRPr = /<w:rFonts\s[^>]*\/>/.test(rPr)
+      ? rPr.replace(/<w:rFonts\s[^>]*\/>/, PESO_RFONTS)
+      : rPr.replace("<w:rPr>", `<w:rPr>${PESO_RFONTS}`);
+    const plain = run.match(
+      /^<w:r(?:\s[^>]*)?>(?:<w:rPr>[\s\S]*?<\/w:rPr>)?<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t><\/w:r>$/
+    );
+    if (!plain) {
+      return run.includes("<w:rPr>") ? run.replace(rPr, pesoRPr) : run.replace(open, open + pesoRPr);
+    }
+    return plain[1]
+      .split("₱")
+      .map(
+        (text, i) =>
+          (i > 0 ? `${open}${pesoRPr}<w:t>₱</w:t></w:r>` : "") +
+          (text ? `${open}${rPr}<w:t xml:space="preserve">${text}</w:t></w:r>` : "")
+      )
+      .join("");
+  });
 }
 
 export async function exportContractOfEmploymentDocx(employee: Employee) {
@@ -637,7 +672,7 @@ export async function exportContractOfEmploymentDocx(employee: Employee) {
     )} to ${escapeXml(workEnd)}</w:t></w:r>`
   );
 
-  zip.file(docPath, xml);
+  zip.file(docPath, withPesoFont(xml));
   const outBlob = await zip.generateAsync({
     type: "blob",
     mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -772,7 +807,7 @@ export async function exportRelieverContractDocx(employee: Employee): Promise<Re
   const found = countHighlightedBlocks(xml);
   xml = replaceHighlightedBlocksSequential(xml, values.map((v) => buildRun(v)));
 
-  zip.file(docPath, xml);
+  zip.file(docPath, withPesoFont(xml));
   const outBlob = await zip.generateAsync({
     type: "blob",
     mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",

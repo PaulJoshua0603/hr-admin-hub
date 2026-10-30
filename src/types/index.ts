@@ -278,7 +278,7 @@ export const RESIGNED_STATUS_LABELS: Record<ResignedStatus, string> = {
 export type MilestoneNote = {
   id: string; // `${employeeId}-${milestoneType}` composite key
   employeeId: string;
-  milestoneType: "birthday" | "relieverEnd" | "third" | "sixth" | "oneYear";
+  milestoneType: "birthday" | "relieverEnd" | "third" | "sixth" | "oneYear" | "twoYears" | "threeYears";
   note: string;
 };
 
