@@ -42,6 +42,10 @@ import {
   type EventReportRow,
   type MilestoneNote,
   regularizationNewGross,
+  REGULARIZATION_RAISE_REASON,
+  formatAmount,
+  parseAmount,
+  regularizationIncrease,
   withNotesTaskListAdditions,
 } from "@/types";
 import { useNotifications } from "@/lib/notificationContext";
@@ -61,6 +65,7 @@ import { EmployeeRelieverTag, RelieverTag } from "@/components/RelieverTag";
 import {
   NOT_SET_LABEL,
   milestoneNoteTone,
+  NOT_REGULARIZED,
   sixthMonthNoteLabels,
   sixthMonthNoteOptions,
   thirdMonthNoteLabels,
@@ -1444,7 +1449,7 @@ function EmployeeCountSummary({ employees }: { employees: Employee[] }) {
                 {visible.map((e) => (
                   <Link
                     key={e.id}
-                    href={`/employees/${e.id}`}
+                    href={`/employees/${e.id.split("~")[0]}`}
                     className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2 transition-colors hover:border-accent"
                   >
                     <span className="min-w-0">
@@ -1474,7 +1479,17 @@ function EmployeeCountSummary({ employees }: { employees: Employee[] }) {
 }
 
 type FilterCategory = "milestones" | "newHires";
-type MilestoneType = "birthday" | "relieverEnd" | "third" | "sixth" | "oneYear" | "twoYears" | "threeYears";
+type MilestoneType =
+  | "birthday"
+  | "relieverEnd"
+  | "third"
+  | "sixth"
+  | "oneYear"
+  | "twoYears"
+  | "threeYears"
+  // Views over the ones above: 1, 2 and 3 Years together, and the 6th-month raises.
+  | "milestonesDate"
+  | "wIncrease";
 
 /** Months after the Hired/Onboarding Date each milestone falls on (0: not counted from it). */
 const MILESTONE_MONTHS: Record<MilestoneType, number> = {
@@ -1485,6 +1500,8 @@ const MILESTONE_MONTHS: Record<MilestoneType, number> = {
   oneYear: 12,
   twoYears: 24,
   threeYears: 36,
+  milestonesDate: 0,
+  wIncrease: 6,
 };
 
 /** Employment anniversaries: exported like the screenshot reference, "November 2026 – 1 Year". */
@@ -1503,6 +1520,12 @@ type FilterRow = {
   replacedName?: string;
   replacedReason?: string;
   replacedPosition?: string;
+  /** Which milestone a row is for — tells 1, 2 and 3 Years apart under Milestones Date. */
+  milestoneKind?: MilestoneType;
+  /** Only on a W/Increase row: the 6th-month raise, amounts formatted without the ₱. */
+  previousGross?: string;
+  increasePercent?: string;
+  newGross?: string;
   /** "Temporary Reliever" or "Absorbed", shown beside the name in every milestone list. */
   relieverTag?: string;
   /** When an absorbed reliever was taken on; never changes their milestone dates. */
@@ -1590,7 +1613,54 @@ const MILESTONE_LABELS: Record<MilestoneType, string> = {
   oneYear: "1 Year",
   twoYears: "2 Years",
   threeYears: "3 Years",
+  milestonesDate: "Milestones Date",
+  wIncrease: "W/Increase",
 };
+
+/** Employees who received an increase at their 6th Month Appraisal / Regularization. */
+function WIncreaseTable({ rows }: { rows: FilterRow[] }) {
+  if (rows.length === 0) {
+    return (
+      <div className="mt-2 rounded-lg border border-dashed border-border p-6 text-center text-sm text-ink-muted">
+        No 6th-month salary increases in this date range.
+      </div>
+    );
+  }
+  return (
+    <div className="mt-2 overflow-x-auto rounded-lg border border-border">
+      <table className="w-full min-w-[960px] text-left text-sm">
+        <thead>
+          <tr className="bg-background text-xs uppercase tracking-wide text-ink-muted">
+            <th className="px-3 py-2">Employee Name</th>
+            <th className="px-3 py-2">Position</th>
+            <th className="px-3 py-2">Department</th>
+            <th className="px-3 py-2">6th Month Appraisal / Regularization Date</th>
+            <th className="px-3 py-2">Previous Total Monthly Gross</th>
+            <th className="px-3 py-2">Increase (%)</th>
+            <th className="px-3 py-2">New Total Monthly Gross</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.id} className="border-t border-border">
+              <td className="px-3 py-2 text-ink">
+                <Link href={`/employees/${r.id}`} className="hover:text-accent">
+                  {r.name}
+                </Link>
+              </td>
+              <td className="px-3 py-2 text-ink-muted">{r.position || "—"}</td>
+              <td className="px-3 py-2 text-ink-muted">{r.department || "—"}</td>
+              <td className="whitespace-nowrap px-3 py-2 text-ink-muted">{formatDate(r.date, "MMMM d, yyyy")}</td>
+              <td className="px-3 py-2 tabular-nums text-ink-muted">{r.previousGross ? `₱${r.previousGross}` : "—"}</td>
+              <td className="px-3 py-2 tabular-nums text-ink-muted">{r.increasePercent ? `${r.increasePercent}%` : "—"}</td>
+              <td className="px-3 py-2 font-medium tabular-nums text-ink">{r.newGross ? `₱${r.newGross}` : "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 function AdvancedFilterView({ employees }: { employees: Employee[] }) {
   const [expanded, setExpanded] = useState(false);
@@ -1627,6 +1697,16 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
     } else {
       addNote({ id: `${employeeId}-${type}`, employeeId, milestoneType: type, note: value });
     }
+  }
+
+  function reasonFor(employeeId: string, type: MilestoneType): string {
+    return milestoneNotes.find((m) => m.employeeId === employeeId && m.milestoneType === type)?.reason || "";
+  }
+
+  function setReasonFor(employeeId: string, type: MilestoneType, value: string) {
+    const existing = milestoneNotes.find((m) => m.employeeId === employeeId && m.milestoneType === type);
+    if (existing) updateNote(existing.id, { reason: value });
+    else addNote({ id: `${employeeId}-${type}`, employeeId, milestoneType: type, note: "", reason: value });
   }
 
   // Shared classification — the same split the Employees count cards use.
@@ -1852,6 +1932,60 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
     };
   }
 
+  /**
+   * Current employees whose milestone, counted from their Hired/Onboarding Date, falls in
+   * the selected range. Shared by the screen and the export.
+   */
+  function regularMilestoneRows(kind: MilestoneType): FilterRow[] {
+    return employees
+      .filter((e) => e.dateHired && separationDate(e) === null)
+      .map((e) => ({
+        ...toFilterRow(e, milestoneDateISO(e.dateHired!, MILESTONE_MONTHS[kind])),
+        relieverTag: relieverTagOf(e) || undefined,
+        absorbedDate: e.relieverAbsorbedDate,
+        milestoneKind: kind,
+      }))
+      .filter((r) => inRange(r.date, startDate, endDate));
+  }
+
+  /** Milestones Date: the 1st, 2nd and 3rd anniversaries in the range, together. */
+  function anniversaryRows(): FilterRow[] {
+    return ANNIVERSARIES.flatMap((k) => regularMilestoneRows(k));
+  }
+
+  /**
+   * W/Increase: current employees who received a raise at their 6th Month Appraisal /
+   * Regularization, dated on that 6th-month milestone. An applied raise is read from the
+   * salary history (the record's gross has already moved); one not applied yet is worked
+   * out from the current gross and the percentage set in the 6th Month list.
+   */
+  function wIncreaseRows(): FilterRow[] {
+    const list: FilterRow[] = [];
+    employees.forEach((e) => {
+      if (!e.dateHired || separationDate(e) !== null) return;
+      const date = milestoneDateISO(e.dateHired, 6);
+      if (!inRange(date, startDate, endDate)) return;
+      const applied = (e.salaryHistory || []).find((h) => h.reason === REGULARIZATION_RAISE_REASON);
+      const pending = !applied && e.sixthMonthSalaryReview === "withIncrease" ? regularizationIncrease(e) : null;
+      if (!applied && !pending) return;
+      const previous = applied ? parseAmount(applied.previousTotalMonthlyGrossCompensation) : pending!.currentGross;
+      const recorded = applied ? parseAmount(applied.newTotalMonthlyGrossCompensation) : null;
+      let percent = applied
+        ? parseAmount(applied.increasePercent ?? e.regularizationIncreasePercent)
+        : pending!.percent;
+      if (percent === null && previous && recorded) percent = (recorded / previous - 1) * 100;
+      const computed = previous !== null && percent !== null ? previous * (1 + percent / 100) : null;
+      const newGross = recorded ?? computed;
+      list.push({
+        ...toFilterRow(e, date),
+        previousGross: previous !== null ? formatAmount(previous) : "",
+        increasePercent: percent !== null ? String(Math.round(percent * 100) / 100) : "",
+        newGross: newGross !== null ? formatAmount(newGross) : "",
+      });
+    });
+    return list;
+  }
+
   const rows: FilterRow[] = (() => {
     if (category === "newHires") {
       // Active only: anyone who has since resigned drops off, whatever their hire date.
@@ -1884,28 +2018,9 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
         }));
     }
     if (milestoneType === "relieverEnd") return relieverRows();
-    const months = MILESTONE_MONTHS[milestoneType];
-    // Relievers are included, labelled "Temporary Reliever" or "Absorbed".
-    // Current employees only (no last day, not resigned, no COE for Resigned), counted
-    // from their Hired/Onboarding Date.
-    return employees
-      .filter((e) => e.dateHired && separationDate(e) === null)
-      .map((e) => {
-        const d = new Date(e.dateHired!);
-        d.setMonth(d.getMonth() + months);
-        return {
-          id: e.id,
-          name: e.name,
-          position: e.position || "",
-          department: e.department || "",
-          email: e.realcognitaEmail || "",
-          supervisor: e.immediateSupervisor || "",
-          date: d.toISOString(),
-          relieverTag: relieverTagOf(e) || undefined,
-          absorbedDate: e.relieverAbsorbedDate,
-        };
-      })
-      .filter((r) => inRange(r.date, startDate, endDate));
+    if (milestoneType === "milestonesDate") return anniversaryRows();
+    if (milestoneType === "wIncrease") return wIncreaseRows();
+    return regularMilestoneRows(milestoneType);
   })().sort((a, b) => (a.date < b.date ? -1 : 1));
 
   const isMilestoneView = category === "milestones";
@@ -1916,7 +2031,9 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
       ? "Hired Date"
       : isRelieverView
         ? "Reliever Contract End Date"
-        : MILESTONE_LABELS[milestoneType];
+        : milestoneType === "milestonesDate"
+          ? "Milestone Date"
+          : MILESTONE_LABELS[milestoneType];
 
   function exportFileName(): string {
     const monday = new Date(startDate);
@@ -1931,7 +2048,27 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
     if (preset === "year") {
       return `Employee Milestones - ${monday.getFullYear()}`;
     }
-    return `Employee Milestones - ${format(monday, "MMMM yyyy")}`;
+    return `Employee Milestones - ${periodLabel()}`;
+  }
+
+  /** The selected period in words: "November 2026", "2026", or "September – October 2026". */
+  function periodLabel(): string {
+    const from = new Date(`${startDate}T00:00:00`);
+    const to = new Date(`${endDate}T00:00:00`);
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return format(new Date(), "MMMM yyyy");
+    const sameYear = from.getFullYear() === to.getFullYear();
+    if (sameYear && from.getMonth() === to.getMonth()) return format(from, "MMMM yyyy");
+    if (sameYear && from.getMonth() === 0 && to.getMonth() === 11) return String(from.getFullYear());
+    return sameYear
+      ? `${format(from, "MMMM")} – ${format(to, "MMMM yyyy")}`
+      : `${format(from, "MMMM yyyy")} – ${format(to, "MMMM yyyy")}`;
+  }
+
+  /** "2026", or "2026–2027" when the range crosses into another year. */
+  function yearLabel(): string {
+    const a = startDate.slice(0, 4);
+    const b = endDate.slice(0, 4);
+    return a === b ? a : `${a}–${b}`;
   }
 
   function dynamicFileName(prefix: string): string {
@@ -2058,7 +2195,8 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
       const ExcelJS = (await import("exceljs")).default;
       const wb = new ExcelJS.Workbook();
 
-      const type = milestoneType;
+      /** Adds one milestone's sheets: one per month, or a single sheet when named. */
+      function addMilestoneSheets(type: MilestoneType, single?: string): number {
       const isThird = type === "third";
       const isSixth = type === "sixth";
       const isReliever = type === "relieverEnd";
@@ -2094,6 +2232,8 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
               "Percentage",
               "New Gross",
               "6th Month Date",
+              "Notes",
+              "Not Regularized Reason",
             ]
           : isBirthday
             ? ["No.", "Employee Name", "Position", "Department", "Email", "Birthday", "Notes"]
@@ -2182,6 +2322,8 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
             percent,
             newGross ? `₱${newGross}` : "",
             formatDate(r.date, "MMMM d, yyyy"),
+            noteFor(r.id, "sixth"),
+            noteFor(r.id, "sixth") === NOT_REGULARIZED ? reasonFor(r.id, "sixth") : "",
           ];
         }
         return [
@@ -2215,7 +2357,15 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
           cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0E5E56" } };
         });
 
-        sheetRows.forEach((r, i) => ws.addRow(rowFor(r, i)));
+        sheetRows.forEach((r, i) => {
+          const added = ws.addRow(rowFor(r, i));
+          // Not Regularized reads in red, as it does on screen.
+          if (isSixth && noteFor(r.id, "sixth") === NOT_REGULARIZED) {
+            [columns.indexOf("Notes") + 1, columns.indexOf("Not Regularized Reason") + 1].forEach((c) => {
+              added.getCell(c).font = { bold: true, color: { argb: "FFDC2626" } };
+            });
+          }
+        });
         ws.addRow([]);
         const totalRow = ws.addRow([`Total: ${sheetRows.length}`]);
         totalRow.getCell(1).font = { bold: true };
@@ -2263,25 +2413,12 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
             .sort((a, b) => (a.date < b.date ? -1 : 1));
         }
         if (kind === "relieverEnd") return relieverRows();
-        return employees
-          .filter((e) => e.dateHired && separationDate(e) === null)
-          .map((e) => {
-            const d = new Date(e.dateHired!);
-            d.setMonth(d.getMonth() + MILESTONE_MONTHS[kind]);
-            return {
-              id: e.id,
-              name: e.name,
-              position: e.position || "",
-              department: e.department || "",
-              email: e.realcognitaEmail || "",
-              supervisor: e.immediateSupervisor || "",
-              date: d.toISOString(),
-              relieverTag: relieverTagOf(e) || undefined,
-              absorbedDate: e.relieverAbsorbedDate,
-            };
-          })
-          .filter((r) => inRange(r.date, startDate, endDate))
-          .sort((a, b) => (a.date < b.date ? -1 : 1));
+        return regularMilestoneRows(kind).sort((a, b) => (a.date < b.date ? -1 : 1));
+      }
+
+      if (single) {
+        buildSheet(periodLabel(), single, computeRowsFor(type));
+        return 1;
       }
 
       // One sheet per month the range actually covers, in date order. A range wholly
@@ -2351,6 +2488,73 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
           buildSheet(label, label, months.get(key) || []);
         });
       }
+      return months.size || 1;
+      }
+
+      /** W/Increase on one sheet, in the Birthday report's design: centred title, No., yellow TOTAL. */
+      function addWIncreaseSheet(): number {
+        const list = wIncreaseRows().sort((a, b) => (a.date < b.date ? -1 : 1));
+        const cols = [
+          "No.",
+          "Employee Name",
+          "Position",
+          "Department",
+          "6th Month Appraisal / Regularization Date",
+          "Previous Total Monthly Gross Compensation Income",
+          "Percentage of Increase (%)",
+          "New Total Monthly Gross Compensation Income",
+        ];
+        const solid = (argb: string) => ({ type: "pattern" as const, pattern: "solid" as const, fgColor: { argb } });
+        const ws = wb.addWorksheet("W-Increase Employees");
+        ws.columns = cols.map((c) => ({ width: c === "No." ? 8 : c.length < 16 ? 22 : Math.min(c.length + 2, 30) }));
+        const title = ws.addRow([`${yearLabel()} W/Increase Employees`]);
+        ws.mergeCells(title.number, 1, title.number, cols.length);
+        title.getCell(1).font = { bold: true, size: 13, color: { argb: "FF0A2E2A" } };
+        title.getCell(1).fill = solid("FFE4F0EE");
+        title.getCell(1).alignment = { horizontal: "center", vertical: "middle" };
+        const head = ws.addRow(cols);
+        head.eachCell((c) => {
+          c.font = { bold: true, color: { argb: "FFFFFFFF" } };
+          c.fill = solid("FF0E5E56");
+          c.alignment = { wrapText: true, vertical: "middle" };
+        });
+        list.forEach((r, i) =>
+          ws.addRow([
+            i + 1,
+            r.name,
+            r.position,
+            r.department,
+            formatDate(r.date, "MMMM d, yyyy"),
+            r.previousGross ? `₱${r.previousGross}` : "",
+            r.increasePercent ? `${r.increasePercent}%` : "",
+            r.newGross ? `₱${r.newGross}` : "",
+          ])
+        );
+        ws.addRow([]);
+        const total = ws.addRow([`TOTAL: ${list.length}`]);
+        total.getCell(1).font = { bold: true };
+        total.getCell(1).fill = solid("FFFFFF00");
+        total.getCell(2).fill = solid("FFFFFF00");
+        return 1;
+      }
+
+      const type = milestoneType;
+      let sheetCount = 0;
+      let fileName: string;
+      if (type === "milestonesDate") {
+        // One workbook for the selected period, one sheet per milestone.
+        (["birthday", "oneYear", "twoYears", "threeYears"] as MilestoneType[]).forEach((k) => {
+          sheetCount += addMilestoneSheets(k, MILESTONE_LABELS[k]);
+        });
+        fileName = exportFileName();
+      } else if (type === "wIncrease") {
+        sheetCount = addWIncreaseSheet();
+        // A "/" cannot appear in a file name, so the file reads "W-Increase".
+        fileName = `${yearLabel()} - W-Increase Employees`;
+      } else {
+        sheetCount = addMilestoneSheets(type);
+        fileName = `${MILESTONE_LABELS[type]} - ${exportFileName()}`;
+      }
 
       const buffer = await wb.xlsx.writeBuffer();
       const blob = new Blob([buffer], {
@@ -2359,12 +2563,12 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${MILESTONE_LABELS[type]} - ${exportFileName()}.xlsx`;
+      a.download = `${fileName}.xlsx`;
       document.body.appendChild(a);
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-      notify(`Exported ${MILESTONE_LABELS[type]} to Excel (${months.size || 1} sheet(s))`, "created");
+      notify(`Exported ${MILESTONE_LABELS[type]} to Excel (${sheetCount} sheet(s))`, "created");
     } finally {
       setExporting(false);
     }
@@ -2409,12 +2613,10 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
               <div className="flex gap-1 rounded-lg bg-background p-1 w-fit">
                 {([
                   { id: "birthday" as const, label: "Birthdays" },
+                  { id: "milestonesDate" as const, label: "Milestones Date" },
                   { id: "relieverEnd" as const, label: "Reliever Contract" },
                   { id: "third" as const, label: "3rd Month" },
                   { id: "sixth" as const, label: "6th Month" },
-                  { id: "oneYear" as const, label: "1 Year" },
-                  { id: "twoYears" as const, label: "2 Years" },
-                  { id: "threeYears" as const, label: "3 Years" },
                 ]).map((m) => (
                   <button
                     key={m.id}
@@ -2438,6 +2640,19 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                   }`}
                 >
                   Grocery Package
+                </button>
+                <button
+                  onClick={() => {
+                    setShowGrocery(false);
+                    setMilestoneType("wIncrease");
+                  }}
+                  className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                    !showGrocery && milestoneType === "wIncrease"
+                      ? "bg-surface text-accent shadow-sm"
+                      : "text-ink-muted hover:text-ink"
+                  }`}
+                >
+                  W/Increase
                 </button>
               </div>
             )}
@@ -2530,7 +2745,9 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
 
               <p className="mt-4 text-sm font-medium text-ink">Total Employees: {rows.length}</p>
 
-              {rows.length === 0 ? (
+              {isMilestoneView && milestoneType === "wIncrease" ? (
+                <WIncreaseTable rows={rows} />
+              ) : rows.length === 0 ? (
                 <div className="mt-2 rounded-lg border border-dashed border-border p-6 text-center text-sm text-ink-muted">
                   {isRelieverView
                     ? "No Temporary Relievers right now."
@@ -2555,6 +2772,9 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                         ) : (
                           <>
                             <th className="px-3 py-2">Email</th>
+                            {isMilestoneView && milestoneType === "milestonesDate" && (
+                              <th className="px-3 py-2">Milestone</th>
+                            )}
                             <th className="px-3 py-2">{dateColumnLabel}</th>
                           </>
                         )}
@@ -2573,7 +2793,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                     </thead>
                     <tbody>
                       {rows.map((r) => (
-                        <tr key={r.id} className="border-t border-border">
+                        <tr key={`${r.id}-${r.milestoneKind ?? ""}`} className="border-t border-border">
                           <td className="px-3 py-2 text-ink">
                             <Link href={`/employees/${r.id}`} className="hover:text-accent">
                               {r.name}
@@ -2597,6 +2817,11 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                           ) : (
                             <>
                               <td className="px-3 py-2 text-ink-muted">{r.email || "—"}</td>
+                              {isMilestoneView && milestoneType === "milestonesDate" && (
+                                <td className="whitespace-nowrap px-3 py-2 font-medium text-ink">
+                                  {r.milestoneKind ? MILESTONE_LABELS[r.milestoneKind] : "—"}
+                                </td>
+                              )}
                               <td className="px-3 py-2 text-ink-muted">
                                 {formatDate(r.displayDate || r.date, "MMMM d, yyyy")}
                               </td>
@@ -2607,13 +2832,24 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                               {milestoneType === "sixth" ? (
                                 // The 6th-month note tracks the evaluation workflow, so it's a
                                 // fixed set of statuses rather than free text.
-                                <StatusSelect
-                                  value={noteFor(r.id, "sixth")}
-                                  onChange={(v) => setNoteFor(r.id, "sixth", v)}
-                                  options={sixthMonthNoteOptions(noteFor(r.id, "sixth"))}
-                                  labels={sixthMonthNoteLabels(noteFor(r.id, "sixth"))}
-                                  tone={milestoneNoteTone}
-                                />
+                                <div className="flex flex-col gap-1.5">
+                                  <StatusSelect
+                                    value={noteFor(r.id, "sixth")}
+                                    onChange={(v) => setNoteFor(r.id, "sixth", v)}
+                                    options={sixthMonthNoteOptions(noteFor(r.id, "sixth"))}
+                                    labels={sixthMonthNoteLabels(noteFor(r.id, "sixth"))}
+                                    tone={milestoneNoteTone}
+                                  />
+                                  {noteFor(r.id, "sixth") === NOT_REGULARIZED && (
+                                    <Input
+                                      key={`reason-${r.id}`}
+                                      placeholder="Reason not regularized"
+                                      defaultValue={reasonFor(r.id, "sixth")}
+                                      onBlur={(e) => setReasonFor(r.id, "sixth", e.target.value)}
+                                      className="min-w-[200px] border-red-500/60 text-sm"
+                                    />
+                                  )}
+                                </div>
                               ) : milestoneType === "third" ? (
                                 // The same idea one milestone earlier, with the shorter list
                                 // the 3rd-month check-in actually has.
@@ -2627,8 +2863,8 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                               ) : (
                                 <Input
                                   placeholder="e.g. Done, Messaged"
-                                  defaultValue={noteFor(r.id, milestoneType)}
-                                  onBlur={(e) => setNoteFor(r.id, milestoneType, e.target.value)}
+                                  defaultValue={noteFor(r.id, r.milestoneKind ?? milestoneType)}
+                                  onBlur={(e) => setNoteFor(r.id, r.milestoneKind ?? milestoneType, e.target.value)}
                                   className="min-w-[160px]"
                                 />
                               )}

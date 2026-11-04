@@ -125,7 +125,9 @@ export function separationDate(
 ): string | null {
   if (e.lastDay) return e.lastDay;
   const fromCoe = coeIndex.get(nameKey(e.name));
-  if (fromCoe) return fromCoe;
+  // A COE for Resigned dated before a rehire belongs to the earlier employment.
+  const beforeRehire = !!e.rehire && !!fromCoe && fromCoe.slice(0, 10) < e.rehire.rehireDate.slice(0, 10);
+  if (fromCoe && !beforeRehire) return fromCoe;
   if (e.resignedStatus === "resigned") return "";
   // Checked after the explicit records above, so a last day entered by hand still wins.
   return relieverContractEnded(e, now);
@@ -176,6 +178,26 @@ export function classifyEmployee(
  * `excluded` so a screen can say how many it left out instead of silently disagreeing
  * with the number of records on file.
  */
+/**
+ * The employment a rehired employee left, as its own record for the Resigned list:
+ * previous position, hire date and last day. Its id ends in "~previous" so it never
+ * collides with the current record; links strip that suffix.
+ */
+export function previousEmploymentRecord(e: Employee): Employee | null {
+  const r = e.rehire;
+  if (!r) return null;
+  return {
+    ...e,
+    id: `${e.id}~previous`,
+    position: r.previousPosition,
+    dateHired: r.previousDateHired,
+    lastDay: r.previousLastDay,
+    resignedStatus: "resigned",
+    reasonForLeaving: r.previousReasonForLeaving,
+    rehire: undefined,
+  };
+}
+
 export function groupEmployees(
   employees: Employee[],
   coeRequests: COERequest[],
@@ -201,6 +223,9 @@ export function groupEmployees(
     if (status === "resigned") resigned.push(e);
     else if (status === "newHire") newHires.push(e);
     else active.push(e);
+    // A rehired employee is current now, and their earlier employment stays under Resigned.
+    const previous = previousEmploymentRecord(e);
+    if (previous) resigned.push(previous);
   });
   return { active, newHires, resigned, excluded, coeIndex };
 }

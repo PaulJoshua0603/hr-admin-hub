@@ -278,8 +278,19 @@ export const RESIGNED_STATUS_LABELS: Record<ResignedStatus, string> = {
 export type MilestoneNote = {
   id: string; // `${employeeId}-${milestoneType}` composite key
   employeeId: string;
-  milestoneType: "birthday" | "relieverEnd" | "third" | "sixth" | "oneYear" | "twoYears" | "threeYears";
+  milestoneType:
+    | "birthday"
+    | "relieverEnd"
+    | "third"
+    | "sixth"
+    | "oneYear"
+    | "twoYears"
+    | "threeYears"
+    | "milestonesDate"
+    | "wIncrease";
   note: string;
+  /** Why, when the 6th-month note is "Not Regularized". */
+  reason?: string;
 };
 
 export type ER2ReportRow = {
@@ -457,6 +468,22 @@ export function defaultOnboardingChecklist(): OnboardingChecklistCategory[] {
 export const FIXED_MONTHLY_ALLOWANCES = 3900;
 
 /** One raise, kept so the record shows where a salary came from. */
+/**
+ * A rehire: the employment they had before, kept intact, beside the new one that replaced
+ * it on the record. Unticking Rehire Employee puts the previous values back from here.
+ */
+export type RehireRecord = {
+  rehireDate: string; // ISO
+  newPosition: string;
+  newDateHired: string; // ISO
+  previousPosition?: string;
+  previousDateHired?: string;
+  previousLastDay?: string;
+  previousResignedStatus?: ResignedStatus;
+  previousReasonForLeaving?: string;
+  appliedAt: string; // ISO
+};
+
 export type SalaryChange = {
   id: string;
   /** ISO date the raise was applied. */
@@ -631,6 +658,8 @@ export type Employee = {
    * which is never changed by it; isReliever stays on as history.
    */
   relieverAbsorbedDate?: string; // ISO date
+  /** Set once the employee is rehired; holds their previous employment. */
+  rehire?: RehireRecord;
   /** Last day of the reliever assignment. */
   relieverEndDate?: string; // ISO date
   /** Who this employee is standing in for. */

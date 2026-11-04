@@ -7,7 +7,10 @@
  * "-Set Status-" default — the 6th month used to carry two extra states for chasing the
  * Head for an evaluation, which this system no longer tracks here.
  */
-export const SIXTH_MONTH_NOTE_OPTIONS = ["Evaluation Submitted", "Done"] as const;
+export const SIXTH_MONTH_NOTE_OPTIONS = ["Evaluation Submitted", "Done", "Not Regularized"] as const;
+
+/** The 6th-month outcome that is shown in red and asks for a reason. */
+export const NOT_REGULARIZED = "Not Regularized";
 
 export const NOT_SET = "";
 export const NOT_SET_LABEL = "-Set Status-";
@@ -39,8 +42,10 @@ export function thirdMonthNoteLabels(current: string): Record<string, string> {
  * from before this dropdown existed, or before the 6th month trimmed its own list down to
  * these two choices.
  */
-export function milestoneNoteTone(value: string): "neutral" | "success" | "warn" | "accent" {
+export function milestoneNoteTone(value: string): "neutral" | "success" | "warn" | "accent" | "danger" {
   switch (value) {
+    case NOT_REGULARIZED:
+      return "danger";
     case "Done":
       return "success";
     case "Evaluation Submitted":

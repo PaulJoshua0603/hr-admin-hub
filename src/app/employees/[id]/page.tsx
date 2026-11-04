@@ -15,6 +15,7 @@ import {
   teamOf,
 } from "@/lib/groceryPackage";
 import { TeamPicker } from "../GroceryPackage";
+import { resignedCoeIndex, separationDate as separationDateOf } from "@/lib/employeeStatus";
 import { useNotifications } from "@/lib/notificationContext";
 import { addDaysISO, addMonthsISO, daysSince, formatDate, isOverdue, nextMondayISO, todayISO } from "@/lib/dates";
 import {
@@ -119,6 +120,12 @@ export default function EmployeeDetailPage({
   );
   const [checklistOpen, setChecklistOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  // Rehire details being entered, before they are applied to the record.
+  const [rehireDraft, setRehireDraft] = useState<{
+    rehireDate: string;
+    newPosition: string;
+    newDateHired: string;
+  } | null>(null);
   const [checklistEditing, setChecklistEditing] = useState(false);
   const [newItemLabels, setNewItemLabels] = useState<Record<string, string>>({});
   const [coeFiles, setCoeFiles] = useState<{ name: string; updated_at?: string | null }[]>([]);
@@ -247,6 +254,66 @@ export default function EmployeeDetailPage({
   }
 
   if (!hydrated) return null;
+  /**
+   * Rehire: the previous employment is copied into employee.rehire untouched, then the
+   * record takes the new position and Hired/Onboarding Date and becomes current again.
+   * Its earlier employment keeps showing under Resigned Employees from that copy.
+   */
+  function applyRehire() {
+    if (!employee || !rehireDraft) return;
+    const { rehireDate, newPosition, newDateHired } = rehireDraft;
+    if (!rehireDate || !newDateHired || !newPosition.trim()) {
+      notify("Enter the Rehire Date, New Position and New Hired / Onboarding Date.", "warn");
+      return;
+    }
+    const iso = (day: string) => `${day}T00:00:00.000Z`;
+    const previousLastDay =
+      employee.lastDay || separationDateOf(employee, resignedCoeIndex(coeRequests)) || undefined;
+    update(employee.id, {
+      rehire: {
+        rehireDate: iso(rehireDate),
+        newPosition: newPosition.trim(),
+        newDateHired: iso(newDateHired),
+        previousPosition: employee.position,
+        previousDateHired: employee.dateHired,
+        previousLastDay,
+        previousResignedStatus: employee.resignedStatus,
+        previousReasonForLeaving: employee.reasonForLeaving,
+        appliedAt: new Date().toISOString(),
+      },
+      position: newPosition.trim(),
+      dateHired: iso(newDateHired),
+      lastDay: undefined,
+      resignedStatus: "active",
+      reasonForLeaving: undefined,
+    });
+    setRehireDraft(null);
+    notify(`${employee.name} rehired as ${newPosition.trim()} — previous employment kept`, "created");
+  }
+
+  /** Unticking Rehire Employee: puts the previous employment back exactly as it was. */
+  function restoreBeforeRehire() {
+    const r = employee?.rehire;
+    if (!employee || !r) return;
+    const when = (iso?: string) => (iso ? formatDate(iso, "MMMM d, yyyy") : "—");
+    if (
+      !window.confirm(
+        `Restore ${employee.name}'s previous employment?\n\nPosition: ${r.previousPosition || "—"}\nHired/Onboarding: ${when(r.previousDateHired)}\nLast Day: ${when(r.previousLastDay)}`
+      )
+    ) {
+      return;
+    }
+    update(employee.id, {
+      position: r.previousPosition,
+      dateHired: r.previousDateHired,
+      lastDay: r.previousLastDay,
+      resignedStatus: r.previousResignedStatus,
+      reasonForLeaving: r.previousReasonForLeaving,
+      rehire: undefined,
+    });
+    notify(`${employee.name} — previous employment restored`, "updated");
+  }
+
   if (!employee) {
     return (
       <div>
@@ -775,7 +842,100 @@ export default function EmployeeDetailPage({
               />
             </FieldGroup>
           )}
+          <FieldGroup label="Rehire Employee">
+            <div className="flex h-9 items-center">
+              <Checkbox
+                checked={!!employee.rehire || !!rehireDraft}
+                disabled={!isEditing}
+                onChange={(checked) => {
+                  if (checked && !employee.rehire) {
+                    const today = new Date().toISOString().slice(0, 10);
+                    setRehireDraft({ rehireDate: today, newPosition: employee.position || "", newDateHired: today });
+                  } else if (!checked) {
+                    if (employee.rehire) restoreBeforeRehire();
+                    else setRehireDraft(null);
+                  }
+                }}
+                label="Rehire this employee"
+              />
+            </div>
+          </FieldGroup>
         </div>
+        {rehireDraft && !employee.rehire && (
+          <div className="mt-4 rounded-lg border border-accent/40 bg-background p-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-ink-muted">Rehire</p>
+            <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <FieldGroup label="Rehire Date">
+                <Input
+                  type="date"
+                  value={rehireDraft.rehireDate}
+                  onChange={(e) => setRehireDraft({ ...rehireDraft, rehireDate: e.target.value })}
+                />
+              </FieldGroup>
+              <FieldGroup label="New Position">
+                <Input
+                  value={rehireDraft.newPosition}
+                  onChange={(e) => setRehireDraft({ ...rehireDraft, newPosition: e.target.value })}
+                />
+              </FieldGroup>
+              <FieldGroup label="New Hired / Onboarding Date">
+                <Input
+                  type="date"
+                  value={rehireDraft.newDateHired}
+                  onChange={(e) => setRehireDraft({ ...rehireDraft, newDateHired: e.target.value })}
+                />
+              </FieldGroup>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <Button size="sm" onClick={applyRehire}>
+                Save Rehire
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setRehireDraft(null)}>
+                Cancel
+              </Button>
+              <span className="text-xs text-ink-muted">
+                Their current position, Hired/Onboarding Date and Last Day are kept as previous
+                employment.
+              </span>
+            </div>
+          </div>
+        )}
+        {employee.rehire && (
+          <div className="mt-4 rounded-lg border border-border bg-background p-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-ink-muted">
+              Employment history — rehired
+            </p>
+            <div className="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+              {[
+                ["Previous Position", employee.rehire.previousPosition || "—"],
+                ["Rehire Date", formatDate(employee.rehire.rehireDate, "MMMM d, yyyy")],
+                [
+                  "Previous Hired / Onboarding Date",
+                  employee.rehire.previousDateHired
+                    ? formatDate(employee.rehire.previousDateHired, "MMMM d, yyyy")
+                    : "—",
+                ],
+                ["New Position", employee.rehire.newPosition],
+                [
+                  "Previous Last Day of Employment",
+                  employee.rehire.previousLastDay
+                    ? formatDate(employee.rehire.previousLastDay, "MMMM d, yyyy")
+                    : "—",
+                ],
+                ["New Hired / Onboarding Date", formatDate(employee.rehire.newDateHired, "MMMM d, yyyy")],
+              ].map(([label, value]) => (
+                <div key={label} className="flex justify-between gap-3 border-b border-border/60 py-1">
+                  <span className="text-ink-muted">{label}</span>
+                  <span className="text-right font-medium text-ink">{value}</span>
+                </div>
+              ))}
+            </div>
+            <p className="mt-2 text-xs text-ink-muted">
+              The previous employment also stays under Resigned Employees. Untick Rehire Employee
+              (in Edit mode) to restore it.
+            </p>
+          </div>
+        )}
         {employee.isReliever && (
           <div className="mt-4 rounded-lg border border-border bg-background p-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-ink-muted">

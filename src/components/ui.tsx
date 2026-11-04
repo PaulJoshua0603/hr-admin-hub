@@ -270,7 +270,7 @@ export function StatusSelect<T extends string>({
   onChange: (v: T) => void;
   options: T[];
   labels: Record<T, string>;
-  tone: (v: T) => "neutral" | "success" | "warn" | "accent";
+  tone: (v: T) => "neutral" | "success" | "warn" | "accent" | "danger";
   className?: string;
   disabled?: boolean;
 }) {
@@ -279,6 +279,7 @@ export function StatusSelect<T extends string>({
     success: "bg-success-soft text-success ring-success/20",
     warn: "bg-warn-soft text-warn ring-warn/20",
     accent: "bg-accent-soft text-accent ring-accent/20",
+    danger: "bg-red-500/15 text-red-600 ring-red-500/40 dark:text-red-400",
   };
   return (
     <div className={`relative inline-flex h-8 shrink-0 items-center ${className}`}>
