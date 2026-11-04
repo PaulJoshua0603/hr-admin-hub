@@ -47,12 +47,115 @@ function readMirror<T>(key: string): T[] | null {
   }
 }
 
-function writeMirror(key: string, value: unknown[]) {
+/**
+ * The device's own copy of every key, in IndexedDB (room for many megabytes, unlike
+ * localStorage). Each entry carries the server's `updated_at` for that copy, so a load
+ * first asks Supabase only for that timestamp — a few bytes — and downloads the value
+ * itself only when it has changed. That is what keeps everyday use inside the free plan:
+ * opening a page no longer pulls the whole employee list every time.
+ *
+ * `pending` marks a change made here that has not reached Supabase yet. It survives a
+ * reload or a closed tab, and is sent as soon as Supabase answers again; until then it
+ * is what this device shows, never an older copy from the server.
+ */
+type CacheEntry = { key: string; updatedAt: string | null; value: unknown[]; pending: boolean };
+const IDB_NAME = "hr_admin_hub";
+const IDB_STORE = "app_store";
+let dbPromise: Promise<IDBDatabase | null> | null = null;
+
+function openCache(): Promise<IDBDatabase | null> {
+  if (typeof indexedDB === "undefined") return Promise.resolve(null);
+  if (!dbPromise) {
+    dbPromise = new Promise((resolve) => {
+      try {
+        const request = indexedDB.open(IDB_NAME, 1);
+        request.onupgradeneeded = () => request.result.createObjectStore(IDB_STORE, { keyPath: "key" });
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => resolve(null);
+        request.onblocked = () => resolve(null);
+      } catch {
+        resolve(null);
+      }
+    });
+  }
+  return dbPromise;
+}
+
+async function cacheGet(key: string): Promise<CacheEntry | null> {
+  const db = await openCache();
+  if (!db) return null;
+  return new Promise((resolve) => {
+    try {
+      const request = db.transaction(IDB_STORE, "readonly").objectStore(IDB_STORE).get(key);
+      request.onsuccess = () => resolve((request.result as CacheEntry | undefined) ?? null);
+      request.onerror = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+async function cachePut(entry: CacheEntry): Promise<void> {
+  const db = await openCache();
+  if (!db) return;
+  await new Promise<void>((resolve) => {
+    try {
+      const tx = db.transaction(IDB_STORE, "readwrite");
+      tx.objectStore(IDB_STORE).put(entry);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+      tx.onabort = () => resolve();
+    } catch {
+      resolve();
+    }
+  });
+  // The old localStorage mirror is superseded; clearing it frees the browser's small quota.
   try {
-    window.localStorage.setItem(MIRROR_PREFIX + key, JSON.stringify(value));
+    window.localStorage.removeItem(MIRROR_PREFIX + entry.key);
   } catch {
-    // Over the browser's storage quota, or storage is unavailable (a private window). The
-    // mirror is a convenience, not a requirement, so this is skipped rather than surfaced.
+    // ignore
+  }
+}
+
+/** Empties the device copy — used after a restore, so every page re-reads from Supabase. */
+export async function clearDeviceCache(): Promise<void> {
+  const db = await openCache();
+  if (!db) return;
+  await new Promise<void>((resolve) => {
+    try {
+      const tx = db.transaction(IDB_STORE, "readwrite");
+      tx.objectStore(IDB_STORE).clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    } catch {
+      resolve();
+    }
+  });
+}
+
+const sameStamp = (a?: string | null, b?: string | null) =>
+  !!a && !!b && new Date(a).getTime() === new Date(b).getTime();
+
+/**
+ * Runs a Supabase request, trying again twice on a failure that may pass (a dropped
+ * connection, a timeout, a busy server) before giving up. Refusals that will not change
+ * on a retry — permissions, or 402 once a quota is spent — are not repeated.
+ */
+async function withRetry<R extends { error: unknown; status?: number }>(run: () => PromiseLike<R>): Promise<R> {
+  const delays = [800, 2500];
+  for (let attempt = 0; ; attempt++) {
+    let result: R;
+    try {
+      result = await run();
+    } catch (err) {
+      if (attempt >= delays.length) throw err;
+      await new Promise((r) => setTimeout(r, delays[attempt]));
+      continue;
+    }
+    const status = result.status ?? 0;
+    const transient = !!result.error && (status === 0 || status === 408 || status === 429 || status >= 500);
+    if (!transient || attempt >= delays.length) return result;
+    await new Promise((r) => setTimeout(r, delays[attempt]));
   }
 }
 
@@ -158,7 +261,6 @@ function cacheFor<T>(key: string, seed: T[] = []): T[] {
 
 function publish(key: string, next: unknown[]) {
   caches.set(key, next);
-  writeMirror(key, next);
   subscribers.get(key)?.forEach((fn) => fn());
 }
 
@@ -223,7 +325,15 @@ async function fromStored<T>(value: unknown): Promise<T[] | null> {
 /** The JSON last known to be in Supabase per key, so a save that changes nothing is skipped. */
 const lastSaved = new Map<string, string>();
 
-/** One key, straight from Supabase — or, if that fails, from the local mirror. */
+/** The server's `updated_at` for each key as of the copy this tab holds. */
+const serverStamps = new Map<string, string>();
+
+/**
+ * One key: the device copy when Supabase says it is still current, otherwise a fresh
+ * download (which then becomes the device copy). If Supabase cannot be reached, the
+ * device copy is used — and a change still waiting to be sent always wins over the
+ * server's older version, and is sent again.
+ */
 async function fetchStoreValue<T>(key: string): Promise<T[] | null> {
   if (!supabaseReady) {
     try {
@@ -233,24 +343,68 @@ async function fetchStoreValue<T>(key: string): Promise<T[] | null> {
       return null;
     }
   }
+  const local = await cacheGet(key);
+  if (local?.pending) {
+    if (local.updatedAt) serverStamps.set(key, local.updatedAt);
+    markPending(key);
+    setTimeout(() => void flushKey(key), 0);
+    return local.value as T[];
+  }
   try {
-    const { data, error } = await supabase
-      .from("app_store")
-      .select("value")
-      .eq("key", key)
-      .maybeSingle();
-    if (error) throw error;
+    const head = await withRetry(() =>
+      supabase.from("app_store").select("updated_at").eq("key", key).maybeSingle()
+    );
+    if (head.error) throw head.error;
     setOffline(key, false);
     // No row yet is a legitimate empty state, not a failure — nothing to publish.
-    const value = await fromStored<T>(data?.value);
-    if (value) lastSaved.set(key, JSON.stringify(value));
+    if (!head.data) return null;
+    const stamp = (head.data as { updated_at: string }).updated_at;
+    if (local && sameStamp(local.updatedAt, stamp)) {
+      serverStamps.set(key, stamp);
+      lastSaved.set(key, JSON.stringify(local.value));
+      return local.value as T[];
+    }
+    const full = await withRetry(() =>
+      supabase.from("app_store").select("value, updated_at").eq("key", key).maybeSingle()
+    );
+    if (full.error) throw full.error;
+    const row = full.data as { value: unknown; updated_at: string } | null;
+    const value = await fromStored<T>(row?.value);
+    if (value && row) {
+      lastSaved.set(key, JSON.stringify(value));
+      serverStamps.set(key, row.updated_at);
+      void cachePut({ key, updatedAt: row.updated_at, value, pending: false });
+    }
     return value;
   } catch {
-    // The request itself failed — a dropped connection, or Supabase refusing traffic
-    // once a quota is spent. Whatever was last seen for this key, in this tab or a
-    // previous one, is better than showing nothing at all.
+    // Supabase did not answer, even after retrying — a dropped connection, or traffic
+    // refused once a quota is spent. Whatever this device last had is better than nothing.
     setOffline(key, true);
-    return readMirror<T>(key);
+    return (local?.value as T[] | undefined) ?? readMirror<T>(key);
+  }
+}
+
+/**
+ * Keys with a change that has not reached Supabase. They are retried every 30 seconds,
+ * when the browser comes back online and when the tab is shown again, until they land.
+ */
+const pendingKeys = new Set<string>();
+let retryTimer: ReturnType<typeof setInterval> | null = null;
+
+function markPending(key: string) {
+  pendingKeys.add(key);
+  if (!retryTimer && typeof window !== "undefined") {
+    retryTimer = setInterval(retryPending, 30_000);
+  }
+}
+
+function retryPending() {
+  pendingKeys.forEach((key) => {
+    if (!saveTimers.has(key) && !saveChains.has(key)) void flushKey(key);
+  });
+  if (pendingKeys.size === 0 && retryTimer) {
+    clearInterval(retryTimer);
+    retryTimer = null;
   }
 }
 
@@ -289,22 +443,38 @@ const saveWaiters = new Map<string, Array<() => void>>();
 async function writeNow(key: string) {
   const list = caches.get(key) ?? [];
   const json = JSON.stringify(list);
-  if (lastSaved.get(key) === json) return;
+  if (lastSaved.get(key) === json) {
+    pendingKeys.delete(key);
+    return;
+  }
   try {
     const value = await toStored(json, list);
-    const { error } = await supabase
-      .from("app_store")
-      .upsert({ key, value, updated_at: new Date().toISOString() });
-    if (error) throw error;
+    const result = await withRetry(() =>
+      supabase
+        .from("app_store")
+        .upsert({ key, value, updated_at: new Date().toISOString() })
+        .select("updated_at")
+        .single()
+    );
+    if (result.error) throw result.error;
+    const stamp = (result.data as { updated_at: string } | null)?.updated_at ?? new Date().toISOString();
     lastSaved.set(key, json);
+    serverStamps.set(key, stamp);
     setOffline(key, false);
     // The cache now holds exactly what the source holds, so nothing needs re-reading.
     loadedAt.set(key, Date.now());
+    // Saved — unless another edit arrived while this one was on its way, which is then
+    // what the device keeps (still pending) and what the next save sends.
+    const current = caches.get(key) ?? [];
+    const settled = current === list;
+    if (settled) pendingKeys.delete(key);
+    void cachePut({ key, updatedAt: stamp, value: current, pending: !settled });
   } catch {
-    // The change is already visible locally and mirrored to localStorage, so nothing is
-    // lost from under the user — but it has not reached Supabase, and the offline banner
-    // is what tells them that. The next save of this key carries it along.
+    // Not saved, even after retrying. The change stays on this device, marked pending,
+    // and is sent again automatically — on the next edit, every 30 seconds, or when the
+    // connection comes back — so nothing typed in the meantime is lost.
     setOffline(key, true);
+    markPending(key);
   }
 }
 
@@ -338,12 +508,81 @@ export function flushPendingSaves(): Promise<void> {
   return Promise.all([...saveTimers.keys()].map(flushKey)).then(() => undefined);
 }
 
+/**
+ * Writes the device copy of an edited key, marked unsent, a moment after typing pauses —
+ * the employee list is megabytes, too much to copy on every keystroke.
+ */
+const pendingCopyTimers = new Map<string, ReturnType<typeof setTimeout>>();
+function queuePendingCopy(key: string) {
+  const existing = pendingCopyTimers.get(key);
+  if (existing) clearTimeout(existing);
+  pendingCopyTimers.set(
+    key,
+    setTimeout(() => {
+      pendingCopyTimers.delete(key);
+      void cachePut({
+        key,
+        updatedAt: serverStamps.get(key) ?? null,
+        value: caches.get(key) ?? [],
+        pending: true,
+      });
+    }, 300)
+  );
+}
+
+/** Everything in Supabase, unpacked, as one backup file's contents. */
+export type BackupFile = {
+  app: "HR Admin Hub";
+  version: 1;
+  exportedAt: string;
+  data: Record<string, { updatedAt: string | null; value: unknown[] }>;
+};
+
+/** Sends anything unsaved, then reads every key from Supabase into a backup. */
+export async function exportAllData(): Promise<BackupFile> {
+  await flushPendingSaves();
+  const result = await withRetry(() => supabase.from("app_store").select("key, value, updated_at"));
+  if (result.error) throw result.error;
+  const backup: BackupFile = { app: "HR Admin Hub", version: 1, exportedAt: new Date().toISOString(), data: {} };
+  for (const row of (result.data ?? []) as { key: string; value: unknown; updated_at: string }[]) {
+    const value = await fromStored<unknown>(row.value);
+    if (value) backup.data[row.key] = { updatedAt: row.updated_at, value };
+  }
+  return backup;
+}
+
+/**
+ * Writes a backup back into Supabase — into this project, or into a new one after moving
+ * — replacing each key it contains. The device copy is cleared so pages re-read it all.
+ */
+export async function restoreAllData(backup: BackupFile): Promise<number> {
+  if (backup?.app !== "HR Admin Hub" || !backup.data || typeof backup.data !== "object") {
+    throw new Error("This is not an HR Admin Hub backup file.");
+  }
+  let count = 0;
+  for (const [key, entry] of Object.entries(backup.data)) {
+    if (!Array.isArray(entry?.value)) continue;
+    const stored = await toStored(JSON.stringify(entry.value), entry.value);
+    const result = await withRetry(() =>
+      supabase.from("app_store").upsert({ key, value: stored, updated_at: new Date().toISOString() })
+    );
+    if (result.error) throw new Error(`Could not restore ${key}: ${result.error.message}`);
+    count++;
+  }
+  pendingKeys.clear();
+  await clearDeviceCache();
+  return count;
+}
+
 if (typeof window !== "undefined") {
   // Leaving the tab sends whatever is still waiting; closing it inside the save delay
   // asks first, so a last edit is never dropped without a word.
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") void flushPendingSaves();
+    else retryPending();
   });
+  // Back online: send anything that could not be saved while the connection was down.
+  window.addEventListener("online", retryPending);
   window.addEventListener("beforeunload", (event) => {
     if (saveTimers.size === 0 && saveChains.size === 0) return;
     void flushPendingSaves();
@@ -405,6 +644,9 @@ export function useSupabaseStore<T extends { id: string }>(
         }
         return Promise.resolve();
       }
+      // Kept on the device within moments, marked unsent, so a reload or a lost connection
+      // before the save lands never loses it.
+      queuePendingCopy(key);
       return scheduleSave(key);
     },
     [key]

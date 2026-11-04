@@ -16,6 +16,7 @@ import {
   EmployeesIcon,
   LogoutIcon,
   ReportsIcon,
+  BackupIcon,
 } from "@/components/icons";
 
 /**
@@ -102,6 +103,7 @@ function OfflineBanner() {
 const NAV = [
   { href: "/employees", label: "Employees", icon: EmployeesIcon },
   { href: "/reports", label: "Reports", icon: ReportsIcon },
+  { href: "/backup", label: "Backup", icon: BackupIcon },
 ];
 
 const PUBLIC_ROUTES = ["/login", "/register", "/forgot-password", "/reset-password"];
