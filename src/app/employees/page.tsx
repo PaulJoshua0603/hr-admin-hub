@@ -1665,7 +1665,7 @@ function WIncreaseTable({ rows }: { rows: FilterRow[] }) {
 function AdvancedFilterView({ employees }: { employees: Employee[] }) {
   const [expanded, setExpanded] = useState(false);
   const [category, setCategory] = useState<FilterCategory>("milestones");
-  const [milestoneType, setMilestoneType] = useState<MilestoneType>("birthday");
+  const [milestoneType, setMilestoneType] = useState<MilestoneType>("milestonesDate");
   // Grocery Package sits beside the milestone tabs but is not a dated milestone.
   const [showGrocery, setShowGrocery] = useState(false);
   // The Reliever Contract row whose absorption date is being picked, and that date.
@@ -1948,6 +1948,24 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
       .filter((r) => inRange(r.date, startDate, endDate));
   }
 
+  /** Current employees whose birthday this year falls in the range, soonest first. */
+  function birthdayRows(): FilterRow[] {
+    return employees
+      .filter(
+        (e) =>
+          e.birthday &&
+          separationDate(e) === null &&
+          inRange(birthdayThisYear(e.birthday, today.getFullYear()), startDate, endDate)
+      )
+      .map((e) => ({
+        ...toFilterRow(e, birthdayThisYear(e.birthday!, today.getFullYear())),
+        // Filtered and sorted on this year's occurrence, but shown as recorded.
+        displayDate: e.birthday,
+        milestoneKind: "birthday" as const,
+      }))
+      .sort((a, b) => (a.date < b.date ? -1 : 1));
+  }
+
   /** Milestones Date: the 1st, 2nd and 3rd anniversaries in the range, together. */
   function anniversaryRows(): FilterRow[] {
     return ANNIVERSARIES.flatMap((k) => regularMilestoneRows(k));
@@ -2002,21 +2020,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
         }));
     }
     // milestones
-    if (milestoneType === "birthday") {
-      return employees
-        .filter((e) => e.birthday && separationDate(e) === null && inRange(birthdayThisYear(e.birthday, today.getFullYear()), startDate, endDate))
-        .map((e) => ({
-          id: e.id,
-          name: e.name,
-          position: e.position || "",
-          department: e.department || "",
-          email: e.realcognitaEmail || "",
-          supervisor: e.immediateSupervisor || "",
-          // Filtered and sorted on this year's occurrence, but shown as recorded.
-          date: birthdayThisYear(e.birthday!, today.getFullYear()),
-          displayDate: e.birthday,
-        }));
-    }
+    if (milestoneType === "birthday") return birthdayRows();
     if (milestoneType === "relieverEnd") return relieverRows();
     if (milestoneType === "milestonesDate") return anniversaryRows();
     if (milestoneType === "wIncrease") return wIncreaseRows();
@@ -2396,22 +2400,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
       }
 
       function computeRowsFor(kind: MilestoneType): FilterRow[] {
-        if (kind === "birthday") {
-          return employees
-            .filter((e) => e.birthday && separationDate(e) === null)
-            .map((e) => ({
-              id: e.id,
-              name: e.name,
-              position: e.position || "",
-              department: e.department || "",
-              email: e.realcognitaEmail || "",
-              supervisor: e.immediateSupervisor || "",
-              date: birthdayThisYear(e.birthday!, today.getFullYear()),
-              displayDate: e.birthday,
-            }))
-            .filter((r) => inRange(r.date, startDate, endDate))
-            .sort((a, b) => (a.date < b.date ? -1 : 1));
-        }
+        if (kind === "birthday") return birthdayRows();
         if (kind === "relieverEnd") return relieverRows();
         return regularMilestoneRows(kind).sort((a, b) => (a.date < b.date ? -1 : 1));
       }
@@ -2612,7 +2601,6 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
             {isMilestoneView && (
               <div className="flex gap-1 rounded-lg bg-background p-1 w-fit">
                 {([
-                  { id: "birthday" as const, label: "Birthdays" },
                   { id: "milestonesDate" as const, label: "Milestones Date" },
                   { id: "relieverEnd" as const, label: "Reliever Contract" },
                   { id: "third" as const, label: "3rd Month" },
@@ -2743,9 +2731,74 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                 </div>
               )}
 
-              <p className="mt-4 text-sm font-medium text-ink">Total Employees: {rows.length}</p>
+              {isMilestoneView && milestoneType === "milestonesDate" ? (
+                <div className="mt-4 flex flex-col gap-6">
+                  {(["birthday", "oneYear", "twoYears", "threeYears"] as MilestoneType[]).map((kind) => {
+                    const list =
+                      kind === "birthday"
+                        ? birthdayRows()
+                        : regularMilestoneRows(kind).sort((a, b) => (a.date < b.date ? -1 : 1));
+                    return (
+                      <section key={kind}>
+                        <h3 className="text-sm font-semibold text-ink">
+                          {MILESTONE_LABELS[kind]} – Total: {list.length} Employee{list.length === 1 ? "" : "s"}
+                        </h3>
+                        {list.length === 0 ? (
+                          <div className="mt-2 rounded-lg border border-dashed border-border p-4 text-center text-sm text-ink-muted">
+                            None in this date range.
+                          </div>
+                        ) : (
+                          <div className="mt-2 overflow-x-auto rounded-lg border border-border">
+                            <table className="w-full min-w-[720px] text-left text-sm">
+                              <thead>
+                                <tr className="bg-background text-xs uppercase tracking-wide text-ink-muted">
+                                  <th className="px-3 py-2">Employee Name</th>
+                                  <th className="px-3 py-2">Position</th>
+                                  <th className="px-3 py-2">Department</th>
+                                  <th className="px-3 py-2">
+                                    {kind === "birthday" ? "Birthday Date" : "Milestone Date"}
+                                  </th>
+                                  <th className="px-3 py-2">Notes</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {list.map((r) => (
+                                  <tr key={`${kind}-${r.id}`} className="border-t border-border">
+                                    <td className="px-3 py-2 text-ink">
+                                      <Link href={`/employees/${r.id}`} className="hover:text-accent">
+                                        {r.name}
+                                      </Link>
+                                      <RelieverTag tag={r.relieverTag} absorbedDate={r.absorbedDate} />
+                                    </td>
+                                    <td className="px-3 py-2 text-ink-muted">{r.position || "—"}</td>
+                                    <td className="px-3 py-2 text-ink-muted">{r.department || "—"}</td>
+                                    <td className="whitespace-nowrap px-3 py-2 text-ink-muted">
+                                      {formatDate(r.displayDate || r.date, "MMMM d, yyyy")}
+                                    </td>
+                                    <td className="px-3 py-2">
+                                      <Input
+                                        placeholder="e.g. Done, Messaged"
+                                        defaultValue={noteFor(r.id, kind)}
+                                        onBlur={(e) => setNoteFor(r.id, kind, e.target.value)}
+                                        className="min-w-[160px]"
+                                      />
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </section>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="mt-4 text-sm font-medium text-ink">Total Employees: {rows.length}</p>
+              )}
 
-              {isMilestoneView && milestoneType === "wIncrease" ? (
+              {isMilestoneView && milestoneType === "milestonesDate" ? null : isMilestoneView &&
+                milestoneType === "wIncrease" ? (
                 <WIncreaseTable rows={rows} />
               ) : rows.length === 0 ? (
                 <div className="mt-2 rounded-lg border border-dashed border-border p-6 text-center text-sm text-ink-muted">
