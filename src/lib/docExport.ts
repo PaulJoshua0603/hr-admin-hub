@@ -1008,6 +1008,7 @@ export async function exportEmployeeInfoSlipDocx(employee: Employee, details: { 
     ["Client", details.client],
     ["Immediate Supervisor", employee.immediateSupervisor || ""],
     ["Applicant Type", applicantType],
+    ["Hired/Onboarding Date", employee.dateHired ? formatDate(employee.dateHired, "MMMM d, yyyy") : ""],
   ];
 
   const text = (value: string, bold = false) =>

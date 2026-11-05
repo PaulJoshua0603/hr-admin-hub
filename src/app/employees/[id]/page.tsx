@@ -1822,7 +1822,7 @@ export default function EmployeeDetailPage({
             <Button
               variant="ghost"
               className="w-full min-w-0 justify-center whitespace-normal text-center leading-snug h-auto py-2"
-              title="Printable slip with Full Name, Position, Department, Client, Immediate Supervisor and Applicant Type, to cut out"
+              title="Printable slip with Full Name, Position, Department, Client, Immediate Supervisor, Applicant Type and Hired/Onboarding Date, to cut out"
               onClick={() =>
                 exportEmployeeInfoSlipDocx(employee, { client: (employee.client || "").trim() || teamClient })
               }
