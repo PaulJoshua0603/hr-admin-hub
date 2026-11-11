@@ -377,6 +377,7 @@ export const DEFAULT_NOTES_TASK_LIST_ITEMS: string[] = [
   "Attach the 1x1 & 2x2 Picture in the Folder",
   "Print Employee 201 Checklist",
   "Print List of Requirements",
+  "Print Application & ID Form – 2 Copies (Colored) Custom ID",
   "Attach Waiver Form",
   "Print Employment Contract",
   "Print Job Offer",
@@ -416,6 +417,10 @@ export const NOTES_TASK_LIST_ADDITIONS: { label: string; after: string | null }[
     after: "Print Employee Name and Attach to White Long Folder",
   },
   { label: "Attach Waiver Form", after: "Print List of Requirements" },
+  {
+    label: "Print Application & ID Form – 2 Copies (Colored) Custom ID",
+    after: "Print List of Requirements",
+  },
 ];
 
 /**
@@ -632,6 +637,13 @@ export type Employee = {
   /** Four-digit years, kept as typed. */
   schoolStartYear?: string;
   schoolEndYear?: string;
+  /** e.g. "Bachelor of Science in Psychology". */
+  degreeEarned?: string;
+  hobbies?: string;
+  /** Path of the profile picture in Supabase Storage (bucket "files"). */
+  photoPath?: string;
+  /** Ticked once the resignation letter has been collected. */
+  resignationLetterCollected?: boolean;
   immediateSupervisor?: string;
   workingHours?: string;
   /** The client account the employee is placed on. */

@@ -26,6 +26,9 @@ function saveBlob(blob: Blob, filename: string) {
   URL.revokeObjectURL(url);
 }
 
+/** Who checks the 201 file, printed on every Employee 201 Checklist. */
+const CHECKED_BY = "Hazel E. Bayani";
+
 export async function exportRequirementsListDocx(employee: Employee) {
   const {
     Document,
@@ -146,11 +149,25 @@ export async function exportRequirementsListDocx(employee: Employee) {
     fieldLine("Biometrics number", employee.biometricsNo || "", false, 300),
     fieldLine("ID number", employee.companyIdNumber || "", false, 300),
     new Paragraph({
-      children: [new TextRun({ text: "Checked By: _______________________", size: BODY_SIZE, font: BODY_FONT })],
+      children: [
+        new TextRun({ text: "Checked By: ", size: BODY_SIZE, font: BODY_FONT }),
+        new TextRun({ text: CHECKED_BY, bold: true, underline: {}, size: BODY_SIZE, font: BODY_FONT }),
+      ],
       spacing: { before: 500, after: 240 },
     }),
     new Paragraph({
-      children: [new TextRun({ text: "Date Checked: _______________________", size: BODY_SIZE, font: BODY_FONT })],
+      children: [
+        new TextRun({ text: "Date Checked: ", size: BODY_SIZE, font: BODY_FONT }),
+        employee.dateHired
+          ? new TextRun({
+              text: formatDate(employee.dateHired, "MMMM dd, yyyy"),
+              bold: true,
+              underline: {},
+              size: BODY_SIZE,
+              font: BODY_FONT,
+            })
+          : new TextRun({ text: "_______________________", size: BODY_SIZE, font: BODY_FONT }),
+      ],
       spacing: { before: 220 },
     }),
   ];

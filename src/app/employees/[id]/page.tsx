@@ -15,6 +15,7 @@ import {
   teamOf,
 } from "@/lib/groceryPackage";
 import { TeamPicker } from "../GroceryPackage";
+import { ProfilePhoto } from "@/components/ProfilePhoto";
 import { resignedCoeIndex, separationDate as separationDateOf } from "@/lib/employeeStatus";
 import { useNotifications } from "@/lib/notificationContext";
 import { addDaysISO, addMonthsISO, daysSince, formatDate, isOverdue, nextMondayISO, todayISO } from "@/lib/dates";
@@ -62,6 +63,7 @@ import {
   formatAmount,
   regularizationIncrease,
   REGULARIZATION_RAISE_REASON,
+  withNotesTaskListAdditions,
   DEFAULT_WORK_LOCATION,
   type SalaryChange,
 } from "@/types";
@@ -120,6 +122,17 @@ export default function EmployeeDetailPage({
   );
   const [checklistOpen, setChecklistOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+
+  // Standard Notes / Task List items added after this record was made (e.g. "Print
+  // Application & ID Form") are slotted into its list once, in their place, ticks kept.
+  const taskListBefore = employee?.onboardingChecklist;
+  useEffect(() => {
+    if (!employee || !taskListBefore?.length) return;
+    const merged = withNotesTaskListAdditions(taskListBefore);
+    const count = (list: typeof merged) => list.reduce((n, c) => n + c.items.length, 0);
+    if (count(merged) !== count(taskListBefore)) update(employee.id, { onboardingChecklist: merged });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only when the record or its list changes
+  }, [employee?.id, taskListBefore]);
   // Rehire details being entered, before they are applied to the record.
   const [rehireDraft, setRehireDraft] = useState<{
     rehireDate: string;
@@ -711,7 +724,17 @@ export default function EmployeeDetailPage({
       />
 
       <Card className="mb-6">
-        <h2 className="font-display text-lg text-ink">Employee details</h2>
+        <div className="flex items-start justify-between gap-4">
+          <h2 className="font-display text-lg text-ink">Employee details</h2>
+          <ProfilePhoto
+            path={employee.photoPath}
+            name={employee.name}
+            employeeId={employee.id}
+            editable={isEditing}
+            onChange={(photoPath) => update(employee.id, { photoPath })}
+            onError={(message) => notify(message, "warn")}
+          />
+        </div>
         {/* The full middle name lives here, not in the display name — the ER2 form prints
             "BAYANI, HAZEL ENTERIA" from these three, and can only print an initial for a
             record that has none of them. */}
@@ -995,7 +1018,7 @@ export default function EmployeeDetailPage({
             </div>
           </div>
         )}
-        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
           <FieldGroup label="Birthday">
             <div className="flex w-full flex-col gap-1">
               <Input
@@ -1010,6 +1033,20 @@ export default function EmployeeDetailPage({
                 </p>
               )}
             </div>
+          </FieldGroup>
+          <FieldGroup label="Status">
+            <select
+              value={employee.civilStatus || ""}
+              disabled={!isEditing}
+              onChange={(e) => update(employee.id, { civilStatus: e.target.value || undefined })}
+              className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-accent disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <option value="">Select…</option>
+              <option value="Single">Single</option>
+              <option value="Married">Married</option>
+              <option value="Widowed">Widowed</option>
+              <option value="Separated">Separated</option>
+            </select>
           </FieldGroup>
           <FieldGroup label="Hired/Onboarding Date">
             <div className="flex w-full flex-col gap-1">
@@ -1146,19 +1183,13 @@ export default function EmployeeDetailPage({
               <option value="Male">Male</option>
             </select>
           </FieldGroup>
-          <FieldGroup label="Status">
-            <select
-              value={employee.civilStatus || ""}
+          <FieldGroup label="Hobbies">
+            <Input
+              placeholder="e.g. Basketball, reading, photography"
+              value={employee.hobbies || ""}
               disabled={!isEditing}
-              onChange={(e) => update(employee.id, { civilStatus: e.target.value || undefined })}
-              className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-accent disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <option value="">Select…</option>
-              <option value="Single">Single</option>
-              <option value="Married">Married</option>
-              <option value="Widowed">Widowed</option>
-              <option value="Separated">Separated</option>
-            </select>
+              onChange={(e) => update(employee.id, { hobbies: e.target.value })}
+            />
           </FieldGroup>
           <FieldGroup label="Working Hours">
             <select
@@ -1260,7 +1291,7 @@ export default function EmployeeDetailPage({
 
       <Card className="mb-6">
         <h2 className="font-display text-lg text-ink">Educational Background</h2>
-        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
           <FieldGroup label="Education Level">
             <select
               value={employee.educationLevel || ""}
@@ -1303,6 +1334,14 @@ export default function EmployeeDetailPage({
               value={employee.schoolEndYear || ""}
               disabled={!isEditing}
               onChange={(e) => update(employee.id, { schoolEndYear: e.target.value.slice(0, 4) })}
+            />
+          </FieldGroup>
+          <FieldGroup label="Degree Earned">
+            <Input
+              placeholder="e.g. Bachelor of Science in Psychology"
+              value={employee.degreeEarned || ""}
+              disabled={!isEditing}
+              onChange={(e) => update(employee.id, { degreeEarned: e.target.value })}
             />
           </FieldGroup>
         </div>
@@ -1659,6 +1698,14 @@ export default function EmployeeDetailPage({
                     onChange={(e) => update(employee.id, { reasonForLeaving: e.target.value })}
                   />
                 </label>
+                <div className="sm:col-span-2">
+                  <Checkbox
+                    checked={!!employee.resignationLetterCollected}
+                    disabled={!isEditing}
+                    onChange={(checked) => update(employee.id, { resignationLetterCollected: checked || undefined })}
+                    label="Collect Resignation Letter"
+                  />
+                </div>
               </div>
               <Button className="mt-2" variant="danger" disabled={!isEditing} onClick={generateCOEResigned}>
                 Generate & Log COE

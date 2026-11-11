@@ -1520,6 +1520,8 @@ type FilterRow = {
   replacedName?: string;
   replacedReason?: string;
   replacedPosition?: string;
+  /** Only on a New Hires row. */
+  hobbies?: string;
   /** Which milestone a row is for — tells 1, 2 and 3 Years apart under Milestones Date. */
   milestoneKind?: MilestoneType;
   /** Only on a W/Increase row: the 6th-month raise, amounts formatted without the ₱. */
@@ -2017,6 +2019,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
           email: e.realcognitaEmail || "",
           supervisor: e.immediateSupervisor || "",
           date: e.dateHired!,
+          hobbies: e.hobbies || "",
         }));
     }
     // milestones
@@ -2099,23 +2102,34 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
       const ExcelJS = (await import("exceljs")).default;
       const wb = new ExcelJS.Workbook();
 
-      // One sheet for the selected range, named for its month: "September New Hires",
-      // titled "September 2026 New Hires".
+      // One sheet for the selected range, named for the months it covers: "October New
+      // Hires" / "October 2026 New Hires", or "October-December New Hires" / "October-
+      // December 2026 New Hires" (each year shown when the range crosses one).
       const rangeStart = new Date(`${startDate}T00:00:00`);
-      const ws = wb.addWorksheet(`${format(rangeStart, "MMMM")} New Hires`);
-      ws.columns = [{ width: 10 }, { width: 32 }, { width: 34 }, { width: 24 }, { width: 24 }];
-      const COLS = 5;
+      const rangeEnd = new Date(`${endDate}T00:00:00`);
+      const sameMonth =
+        rangeStart.getFullYear() === rangeEnd.getFullYear() && rangeStart.getMonth() === rangeEnd.getMonth();
+      const sameYear = rangeStart.getFullYear() === rangeEnd.getFullYear();
+      const sheetLabel = sameMonth ? format(rangeStart, "MMMM") : `${format(rangeStart, "MMMM")}-${format(rangeEnd, "MMMM")}`;
+      const titleLabel = sameMonth
+        ? format(rangeStart, "MMMM yyyy")
+        : sameYear
+          ? `${format(rangeStart, "MMMM")}-${format(rangeEnd, "MMMM yyyy")}`
+          : `${format(rangeStart, "MMMM yyyy")}-${format(rangeEnd, "MMMM yyyy")}`;
+      const ws = wb.addWorksheet(`${sheetLabel} New Hires`.slice(0, 31));
+      ws.columns = [{ width: 10 }, { width: 32 }, { width: 34 }, { width: 24 }, { width: 24 }, { width: 32 }];
+      const COLS = 6;
       const solid = (argb: string) => ({ type: "pattern" as const, pattern: "solid" as const, fgColor: { argb } });
       const edge = { style: "thin" as const, color: { argb: "FF1F2937" } };
 
-      const titleRow = ws.addRow([`${format(rangeStart, "MMMM yyyy")} New Hires`]);
+      const titleRow = ws.addRow([`${titleLabel} New Hires`]);
       ws.mergeCells(titleRow.number, 1, titleRow.number, COLS);
       titleRow.height = 22;
       titleRow.getCell(1).font = { bold: true, size: 13, color: { argb: "FF000000" } };
       titleRow.getCell(1).fill = solid("FFEAF4F1");
       titleRow.getCell(1).alignment = { horizontal: "center", vertical: "middle" };
 
-      const headerRow = ws.addRow(["No.", "Employee Name", "Position", "Department", "Hired Date"]);
+      const headerRow = ws.addRow(["No.", "Employee Name", "Position", "Department", "Hired Date", "Hobbies"]);
       headerRow.height = 20;
       headerRow.eachCell((c, col) => {
         c.font = { bold: true, color: { argb: "FFFFFFFF" } };
@@ -2145,6 +2159,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
             e.position || "",
             e.department || "",
             formatDate(e.dateHired!, "MMMM d, yyyy"),
+            e.hobbies || "",
           ]);
           for (let col = 1; col <= COLS; col++) {
             const cell = row.getCell(col);
@@ -2829,6 +2844,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                               <th className="px-3 py-2">Milestone</th>
                             )}
                             <th className="px-3 py-2">{dateColumnLabel}</th>
+                            {category === "newHires" && <th className="px-3 py-2">Hobbies</th>}
                           </>
                         )}
                         {isMilestoneView && <th className="px-3 py-2">Notes</th>}
@@ -2878,6 +2894,9 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                               <td className="px-3 py-2 text-ink-muted">
                                 {formatDate(r.displayDate || r.date, "MMMM d, yyyy")}
                               </td>
+                              {category === "newHires" && (
+                                <td className="px-3 py-2 text-ink-muted">{r.hobbies || "—"}</td>
+                              )}
                             </>
                           )}
                           {isMilestoneView && (
