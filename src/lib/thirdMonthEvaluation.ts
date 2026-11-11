@@ -7,6 +7,7 @@
  * has to be the same one the managers are used to signing.
  */
 import type { Employee } from "@/types";
+import { applyLetterheadToDocx } from "./letterhead";
 
 export type ThirdMonthEvaluationResult = {
   blob: Blob;
@@ -94,6 +95,7 @@ export async function buildThirdMonthEvaluationDocx(
   if (!named) return { blob: source, named: false };
 
   zip.file(docPath, next);
+  await applyLetterheadToDocx(zip);
   const blob = await zip.generateAsync({
     type: "blob",
     mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",

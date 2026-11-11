@@ -12,6 +12,7 @@ import {
   regularizationIncrease,
 } from "@/types";
 import { formatDate } from "./dates";
+import { applyLetterheadToDocx, withLetterhead } from "./letterhead";
 import { supabase, supabaseReady } from "./supabaseClient";
 
 function saveBlob(blob: Blob, filename: string) {
@@ -375,6 +376,7 @@ export async function exportCOEWithPurposeDocx(
   );
 
   zip.file(docPath, withPesoFont(xml));
+  await applyLetterheadToDocx(zip);
   const outBlob = await zip.generateAsync({
     type: "blob",
     mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -412,6 +414,7 @@ export async function exportCOEResignedDocx(employeeName: string, employee?: Emp
   ]);
 
   zip.file(docPath, withPesoFont(xml));
+  await applyLetterheadToDocx(zip);
   const outBlob = await zip.generateAsync({
     type: "blob",
     mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -482,6 +485,7 @@ export async function exportRegularizationWithIncreaseDocx(employee: Employee) {
   ]);
 
   zip.file(docPath, withPesoFont(xml));
+  await applyLetterheadToDocx(zip);
   const outBlob = await zip.generateAsync({
     type: "blob",
     mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -517,6 +521,7 @@ export async function exportRegularizationNoIncreaseDocx(employee: Employee) {
   ]);
 
   zip.file(docPath, withPesoFont(xml));
+  await applyLetterheadToDocx(zip);
   const outBlob = await zip.generateAsync({
     type: "blob",
     mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -673,6 +678,7 @@ export async function exportContractOfEmploymentDocx(employee: Employee) {
   );
 
   zip.file(docPath, withPesoFont(xml));
+  await applyLetterheadToDocx(zip);
   const outBlob = await zip.generateAsync({
     type: "blob",
     mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -808,6 +814,7 @@ export async function exportRelieverContractDocx(employee: Employee): Promise<Re
   xml = replaceHighlightedBlocksSequential(xml, values.map((v) => buildRun(v)));
 
   zip.file(docPath, withPesoFont(xml));
+  await applyLetterheadToDocx(zip);
   const outBlob = await zip.generateAsync({
     type: "blob",
     mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -825,7 +832,7 @@ export async function uploadContractTemplate(file: File) {
 }
 
 export async function exportEndorsementLetterDocx(employee: Employee) {
-  const { Document, Packer, Paragraph, TextRun, AlignmentType, ImageRun, TextWrappingType } = await import("docx");
+  const { Document, Packer, Paragraph, TextRun, AlignmentType } = await import("docx");
 
   const FONT = "Arial";
   const SIZE = 20; // 10pt, matches the source template
@@ -834,20 +841,6 @@ export async function exportEndorsementLetterDocx(employee: Employee) {
   const bold = (text: string, extra: Partial<{ size: number }> = {}) =>
     new TextRun({ text, bold: true, font: FONT, size: extra.size || SIZE });
   const plain = (text: string) => new TextRun({ text, font: FONT, size: SIZE });
-
-  const letterheadBuffer = await fetch("/letterhead-realcognita.png").then((r) => r.arrayBuffer());
-  const letterheadImage = new ImageRun({
-    type: "png",
-    data: letterheadBuffer,
-    transformation: { width: 816, height: 1056 },
-    floating: {
-      horizontalPosition: { relative: "page", offset: 0 },
-      verticalPosition: { relative: "page", offset: 0 },
-      behindDocument: true,
-      wrap: { type: TextWrappingType.NONE },
-      allowOverlap: true,
-    },
-  });
 
   const doc = new Document({
     numbering: {
@@ -869,13 +862,13 @@ export async function exportEndorsementLetterDocx(employee: Employee) {
     sections: [
       {
         properties: {
-          page: { margin: { top: 3300, right: 1080, bottom: 1440, left: 1080 } },
+          page: { margin: { top: 2500, right: 1080, bottom: 1440, left: 1080 } },
         },
         children: [
           new Paragraph({
             alignment: AlignmentType.CENTER,
             spacing: { after: 320 },
-            children: [letterheadImage, bold("ENDORSEMENT LETTER", { size: 24 })],
+            children: [bold("ENDORSEMENT LETTER", { size: 24 })],
           }),
           new Paragraph({
             children: [bold(`Date: ${dateText}`)],
@@ -966,7 +959,7 @@ export async function exportEndorsementLetterDocx(employee: Employee) {
     ],
   });
 
-  const blob = await Packer.toBlob(doc);
+  const blob = await withLetterhead(await Packer.toBlob(doc));
   saveBlob(blob, `${employee.name} Endorsement Letter.docx`);
 }
 

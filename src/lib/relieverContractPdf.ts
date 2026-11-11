@@ -22,6 +22,7 @@ import type { PDFFont, PDFPage, RGB } from "pdf-lib";
 import type { Employee } from "@/types";
 import { DEFAULT_WORK_LOCATION } from "@/types";
 import { formatDate } from "./dates";
+import { applyLetterheadToPdf } from "./letterhead";
 
 export type RelieverFillResult = {
   bytes: Uint8Array;
@@ -813,7 +814,10 @@ export async function buildRelieverContractPdf(
 
 
   return {
-    bytes: await pdf.save(),
+    bytes: await (async () => {
+      await applyLetterheadToPdf(pdf);
+      return pdf.save();
+    })(),
     filled: spec.map((s) => s.find).filter((f) => filled.has(f)),
     missing: spec.map((s) => s.find).filter((f) => !filled.has(f)),
   };

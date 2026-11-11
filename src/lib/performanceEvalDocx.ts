@@ -8,6 +8,7 @@
  * without anything here needing to change. Nothing else in the document is touched.
  */
 import { PERF_EVAL_ANCHORS, type PerfEvalValues } from "./performanceEval";
+import { applyLetterheadToDocx } from "./letterhead";
 
 export type PerfEvalDocxResult = {
   blob: Blob;
@@ -192,6 +193,7 @@ export async function buildPerformanceEvaluationDocx(
   }
 
   zip.file("word/document.xml", xml);
+  await applyLetterheadToDocx(zip);
   const blob = await zip.generateAsync({ type: "blob", mimeType: DOCX_MIME });
   return { blob, missing };
 }
