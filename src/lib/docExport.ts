@@ -589,11 +589,17 @@ function tidyContractLayout(xml: string): string {
   };
   let inSignOff = false;
   let afterHeading = false;
+  let previousBlank = false;
   return xml.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g, (p) => {
     if (/<w:tbl[\s>]/.test(p) || /<w:sectPr/.test(p)) return p;
     const text = textOf(p).trim();
     const numbered = /<w:numPr>/.test(p);
     if (numbered && !text && !/<w:drawing|<w:pict|<w:fldChar/.test(p)) return "";
+    // Runs of blank lines (spacing made for the old layout) shrink to one; the sign-off
+    // keeps its blank lines, which are the space to sign in.
+    const blank = !text && !/<w:drawing|<w:pict|<w:fldChar|<w:br /.test(p);
+    if (blank && previousBlank && !inSignOff) return "";
+    previousBlank = blank;
     const heading =
       text.length > 0 && text.length <= 60 && /<w:u w:val="(?!none)/.test(p) && (numbered || /^\d+\./.test(text));
     // The sign-off — from "Yours sincerely" to the employee's "I, … hereby sign" line —
@@ -609,6 +615,32 @@ function tidyContractLayout(xml: string): string {
       (!/<w:keepNext|<w:keepLines|<w:pageBreakBefore|<w:framePr|<w:widowControl/.test(p) ? "<w:widowControl/>" : "");
     return tags ? addToPPr(p, tags) : p;
   });
+}
+
+/**
+ * A numbered item that stops mid-sentence ("…for your own benefit or for the") with the
+ * sentence carried on as the next item ("benefit of any other person…") is one item: the
+ * second one's text joins the first (and the blank line between them goes).
+ */
+function joinSplitListItems(xml: string): string {
+  const paras = [...xml.matchAll(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g)];
+  const textOf = (p: string) => [...p.matchAll(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g)].map((m) => m[1]).join("").trim();
+  const edits: { start: number; end: number; text: string }[] = [];
+  for (let i = 0; i < paras.length; i++) {
+    const a = paras[i];
+    if (!/<w:numPr>/.test(a[0])) continue;
+    const aText = textOf(a[0]);
+    if (!aText || /[.;:,!?)"”]$/.test(aText)) continue;
+    let j = i + 1;
+    if (j < paras.length && !textOf(paras[j][0]) && !/<w:numPr>/.test(paras[j][0])) j++;
+    const b = paras[j];
+    if (!b || !/<w:numPr>/.test(b[0]) || !/^[a-z]/.test(textOf(b[0]))) continue;
+    const runs = b[0].replace(/^<w:p(?:\s[^>]*)?>(?:<w:pPr>[\s\S]*?<\/w:pPr>)?/, "").replace(/<\/w:p>$/, "");
+    const space = /\s$/.test(aText) ? "" : '<w:r><w:t xml:space="preserve"> </w:t></w:r>';
+    edits.push({ start: a.index!, end: b.index! + b[0].length, text: a[0].replace(/<\/w:p>$/, `${space}${runs}</w:p>`) });
+    i = j;
+  }
+  return edits.reverse().reduce((x, e) => x.slice(0, e.start) + e.text + x.slice(e.end), xml);
 }
 
 /** A font that has the ₱ glyph and sits well beside the contracts' Garamond. */
@@ -673,7 +705,7 @@ export async function exportContractOfEmploymentDocx(employee: Employee) {
     : formatDate(todayISOString(), "MMMM d, yyyy");
   const hireDate = employee.dateHired ? formatDate(employee.dateHired, "MMMM d, yyyy") : "";
 
-  xml = tidyContractLayout(xml);
+  xml = joinSplitListItems(tidyContractLayout(xml));
 
   // "Employee " immediately preceding "Fullname"/"Position" — drop the
   // literal "Employee " prefix so the placeholder reads as the real value.
