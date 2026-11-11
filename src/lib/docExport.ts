@@ -560,13 +560,55 @@ export async function deleteEmployeeCOEFile(employeeId: string, name: string) {
 /** Parse a "6:30am – 3:00pm" style shift string into ["6:30 a.m.", "3:00 p.m."]. */
 function parseWorkingHours(shift?: string): [string, string] {
   if (!shift) return ["", ""];
-  const parts = shift.split(/[–\-]/).map((s) => s.trim());
+  const parts = shift.split(/\s+to\s+|[–—-]/i).map((s) => s.trim());
   const toFormal = (t: string) => {
     const m = t.match(/(\d{1,2}:\d{2})\s*([ap])\.?m\.?/i);
     if (!m) return t;
     return `${m[1]} ${m[2].toLowerCase()}.m.`;
   };
   return [toFormal(parts[0] || ""), toFormal(parts[1] || "")];
+}
+
+/**
+ * Layout clean-up for the Contract of Employment, which the taller letterhead re-flows:
+ * - a numbered section heading ("8. 13th Month Pay" — short, underlined) stays on the
+ *   same page as the text under it instead of being left alone at a page bottom;
+ * - an empty numbered item (a stray "b." with nothing after it) is dropped;
+ * - every paragraph keeps at least two lines together at page breaks.
+ */
+function tidyContractLayout(xml: string): string {
+  const textOf = (p: string) => [...p.matchAll(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g)].map((m) => m[1]).join("");
+  // Word wants pPr children in schema order: pStyle, keepNext, …, widowControl, numPr, ….
+  const addToPPr = (p: string, tags: string) => {
+    if (/<w:pPr>/.test(p)) {
+      return /<w:pPr><w:pStyle [^>]*\/>/.test(p)
+        ? p.replace(/(<w:pPr><w:pStyle [^>]*\/>)/, `$1${tags}`)
+        : p.replace("<w:pPr>", `<w:pPr>${tags}`);
+    }
+    return p.replace(/^<w:p(\s[^>]*)?>/, (open) => `${open}<w:pPr>${tags}</w:pPr>`);
+  };
+  let inSignOff = false;
+  let afterHeading = false;
+  return xml.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g, (p) => {
+    if (/<w:tbl[\s>]/.test(p) || /<w:sectPr/.test(p)) return p;
+    const text = textOf(p).trim();
+    const numbered = /<w:numPr>/.test(p);
+    if (numbered && !text && !/<w:drawing|<w:pict|<w:fldChar/.test(p)) return "";
+    const heading =
+      text.length > 0 && text.length <= 60 && /<w:u w:val="(?!none)/.test(p) && (numbered || /^\d+\./.test(text));
+    // The sign-off — from "Yours sincerely" to the employee's "I, … hereby sign" line —
+    // stays together, so the two signatures never land on different pages.
+    if (/^(yours sincerely|sincerely|very truly yours)/i.test(text)) inSignOff = true;
+    // Blank lines between a heading and its text carry the keep too, or the chain breaks.
+    const blankAfterHeading = afterHeading && !text;
+    afterHeading = heading || blankAfterHeading;
+    const keepWithNext = heading || blankAfterHeading || (inSignOff && !/hereby sign/i.test(text));
+    if (/hereby sign/i.test(text)) inSignOff = false;
+    const tags =
+      (keepWithNext && !/<w:keepNext/.test(p) ? "<w:keepNext/>" : "") +
+      (!/<w:keepNext|<w:keepLines|<w:pageBreakBefore|<w:framePr|<w:widowControl/.test(p) ? "<w:widowControl/>" : "");
+    return tags ? addToPPr(p, tags) : p;
+  });
 }
 
 /** A font that has the ₱ glyph and sits well beside the contracts' Garamond. */
@@ -630,6 +672,8 @@ export async function exportContractOfEmploymentDocx(employee: Employee) {
     ? formatDate(employee.dateHired, "MMMM d, yyyy")
     : formatDate(todayISOString(), "MMMM d, yyyy");
   const hireDate = employee.dateHired ? formatDate(employee.dateHired, "MMMM d, yyyy") : "";
+
+  xml = tidyContractLayout(xml);
 
   // "Employee " immediately preceding "Fullname"/"Position" — drop the
   // literal "Employee " prefix so the placeholder reads as the real value.
@@ -832,7 +876,7 @@ export async function uploadContractTemplate(file: File) {
 }
 
 export async function exportEndorsementLetterDocx(employee: Employee) {
-  const { Document, Packer, Paragraph, TextRun, AlignmentType } = await import("docx");
+  const { Document, Packer, Paragraph, TextRun, AlignmentType, BorderStyle } = await import("docx");
 
   const FONT = "Arial";
   const SIZE = 20; // 10pt, matches the source template
@@ -872,23 +916,15 @@ export async function exportEndorsementLetterDocx(employee: Employee) {
           }),
           new Paragraph({
             children: [bold(`Date: ${dateText}`)],
-            spacing: { after: 260 },
+            spacing: { after: 480 },
           }),
+          // One centred line with a rule under it, instead of the title split over two
+          // lines above a row of underscores.
           new Paragraph({
             alignment: AlignmentType.CENTER,
-            children: [bold("OPENING OF PAYROLL ACCOUNTS FOR EMPLOYEES OF")],
-          }),
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            children: [bold("Realcognita Inc. ")],
-            spacing: { after: 120 },
-          }),
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            children: [
-              bold("___________________________________________________________________"),
-            ],
-            spacing: { after: 320 },
+            children: [bold("Opening of Payroll Accounts for Employees of Realcognita Inc.", { size: 22 })],
+            border: { bottom: { style: BorderStyle.SINGLE, size: 8, space: 6, color: "000000" } },
+            spacing: { after: 400 },
           }),
           new Paragraph({
             children: [plain("Dear Branch Manager Mr. Paul D. Joseph")],
