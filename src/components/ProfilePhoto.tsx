@@ -7,17 +7,22 @@ const BUCKET = "files";
 /** Longest side of the stored picture. Kept small: it is shown at avatar size, and every
  *  view downloads it, which counts against the Supabase plan. */
 const MAX_SIDE = 400;
+/** The full-quality copy kept beside it, for the full-screen preview and the download. */
+const HD_SIDE = 2400;
 
-/** Shrinks a picture to MAX_SIDE and re-encodes it as JPEG. */
-async function shrink(file: File): Promise<Blob> {
+/** The HD copy sits next to the small one: "…-123.jpg" → "…-123-hd.jpg". */
+export const hdPathOf = (path: string) => path.replace(/\.jpg$/, "-hd.jpg");
+
+/** Resizes a picture to fit maxSide (never enlarging) and re-encodes it as JPEG. */
+async function shrink(file: File, maxSide = MAX_SIDE, quality = 0.85): Promise<Blob> {
   const bitmap = await createImageBitmap(file);
-  const scale = Math.min(1, MAX_SIDE / Math.max(bitmap.width, bitmap.height));
+  const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
   const canvas = document.createElement("canvas");
   canvas.width = Math.round(bitmap.width * scale);
   canvas.height = Math.round(bitmap.height * scale);
   canvas.getContext("2d")!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
   return new Promise((resolve, reject) =>
-    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Could not read the picture"))), "image/jpeg", 0.85)
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Could not read the picture"))), "image/jpeg", quality)
   );
 }
 
@@ -43,6 +48,7 @@ export function ProfilePhoto({
   const [url, setUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [preview, setPreview] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -66,11 +72,13 @@ export function ProfilePhoto({
     }
     setBusy(true);
     try {
-      const blob = await shrink(file);
+      const [blob, hd] = await Promise.all([shrink(file), shrink(file, HD_SIDE, 0.92)]);
       const next = `profile-photos/${employeeId}-${Date.now()}.jpg`;
       const { error } = await supabase.storage.from(BUCKET).upload(next, blob, { contentType: "image/jpeg" });
       if (error) throw error;
-      if (path) void supabase.storage.from(BUCKET).remove([path]);
+      const hdUpload = await supabase.storage.from(BUCKET).upload(hdPathOf(next), hd, { contentType: "image/jpeg" });
+      if (hdUpload.error) throw hdUpload.error;
+      if (path) void supabase.storage.from(BUCKET).remove([path, hdPathOf(path)]);
       setUrl(URL.createObjectURL(blob));
       onChange(next);
     } catch (err) {
@@ -81,10 +89,41 @@ export function ProfilePhoto({
   }
 
   function removePhoto() {
-    if (path) void supabase.storage.from(BUCKET).remove([path]);
+    if (path) void supabase.storage.from(BUCKET).remove([path, hdPathOf(path)]);
     setUrl(null);
     onChange(undefined);
   }
+
+  /** Full-screen view of the HD copy (the small one for pictures from before HD copies). */
+  async function openPreview() {
+    if (!path) return;
+    const hd = await supabase.storage.from(BUCKET).createSignedUrl(hdPathOf(path), 60 * 60);
+    setPreview(hd.data?.signedUrl ?? url);
+  }
+
+  async function download() {
+    if (!path) return;
+    const fileName = `${name} - Profile Picture.jpg`;
+    let link = (await supabase.storage.from(BUCKET).createSignedUrl(hdPathOf(path), 60, { download: fileName })).data?.signedUrl;
+    if (!link) link = (await supabase.storage.from(BUCKET).createSignedUrl(path, 60, { download: fileName })).data?.signedUrl;
+    if (!link) {
+      onError("Could not download the picture.");
+      return;
+    }
+    const a = document.createElement("a");
+    a.href = link;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  useEffect(() => {
+    if (!preview) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setPreview(null);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [preview]);
 
   const initials = name
     .split(/\s+/)
@@ -99,8 +138,8 @@ export function ProfilePhoto({
     <div className="flex flex-col items-center gap-1.5">
       <button
         type="button"
-        disabled={!editable || busy}
-        onClick={() => input.current?.click()}
+        disabled={busy || (!editable && !path)}
+        onClick={() => (editable ? input.current?.click() : void openPreview())}
         onDragOver={(e) => {
           if (!editable) return;
           e.preventDefault();
@@ -113,10 +152,10 @@ export function ProfilePhoto({
           const file = e.dataTransfer.files?.[0];
           if (editable && file) void upload(file);
         }}
-        title={editable ? "Click or drop a photo here" : "Click Edit to change the photo"}
+        title={editable ? "Click or drop a photo here" : path ? "Click to view full screen" : "Click Edit to add a photo"}
         className={`relative flex h-28 w-28 items-center justify-center overflow-hidden rounded-full border-2 bg-background text-2xl font-semibold text-ink-muted transition-colors ${
           dragging ? "border-accent" : "border-dashed border-border"
-        } ${editable ? "cursor-pointer hover:border-accent" : "cursor-default"}`}
+        } ${editable || path ? "cursor-pointer hover:border-accent" : "cursor-default"}`}
       >
         {shown ? (
           // eslint-disable-next-line @next/next/no-img-element -- signed Supabase URL, not a static asset
@@ -154,7 +193,47 @@ export function ProfilePhoto({
           )}
         </span>
       ) : (
-        <span className="text-[11px] text-ink-muted">Profile Picture</span>
+        <span className="text-[11px] text-ink-muted">{path ? "Click to view" : "Profile Picture"}</span>
+      )}
+
+      {preview && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${name} profile picture`}
+          className="fixed inset-0 z-50 flex flex-col bg-black/90"
+          onClick={() => setPreview(null)}
+        >
+          <div className="flex items-center justify-between gap-3 px-5 py-3 text-white" onClick={(e) => e.stopPropagation()}>
+            <span className="truncate text-sm font-medium">{name}</span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void download()}
+                className="rounded-lg bg-white/15 px-3 py-1.5 text-sm font-medium hover:bg-white/25"
+              >
+                Download HD
+              </button>
+              <button
+                type="button"
+                onClick={() => setPreview(null)}
+                className="rounded-lg bg-white/15 px-3 py-1.5 text-sm font-medium hover:bg-white/25"
+                aria-label="Close"
+              >
+                Close ✕
+              </button>
+            </div>
+          </div>
+          <div className="flex min-h-0 flex-1 items-center justify-center p-4">
+            {/* eslint-disable-next-line @next/next/no-img-element -- signed Supabase URL */}
+            <img
+              src={preview}
+              alt={`${name} profile picture`}
+              className="max-h-full max-w-full rounded-lg object-contain shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            />
+          </div>
+        </div>
       )}
     </div>
   );
