@@ -7,7 +7,6 @@ import { format } from "date-fns";
 import { useSupabaseStore } from "@/lib/useSupabaseStore";
 import {
   addDaysISO,
-  addMonthsISO,
   formatDate,
   formatTime12,
   isOverdue,
@@ -29,7 +28,6 @@ import {
 } from "@/components/ui";
 import {
   DEFAULT_WORK_LOCATION,
-  EMPLOYMENT_MILESTONE_MONTHS,
   defaultOnboardingChecklist,
   emptyPreEmploymentChecklist,
   emptyRequirements,
@@ -60,6 +58,7 @@ import {
   isTemporaryReliever,
   relieverTag as relieverTagOf,
   separationDate as separationDateOf,
+  separationReason,
 } from "@/lib/employeeStatus";
 import { EmployeeRelieverTag, RelieverTag } from "@/components/RelieverTag";
 import {
@@ -1175,16 +1174,9 @@ export default function EmployeesPage() {
 
 type CountGroup = "current" | "newHires" | "resigned";
 
-/** Whoever has not yet reached the 6th-month milestone from their hire date. */
-function isUnderProbation(e: Employee, now: Date = new Date()): boolean {
-  if (!e.dateHired) return false;
-  const sixthMonth = new Date(addMonthsISO(e.dateHired, EMPLOYMENT_MILESTONE_MONTHS.sixthMonth));
-  return sixthMonth.getTime() > now.getTime();
-}
-
 /**
- * Three sheets: Current Employees (with a New Hires section beneath its total), employees
- * still under their 6-month probationary period, and Resigned Employees. The full name
+ * Two sheets: Current Employees (with the Upcoming New Hires section beneath its total) and
+ * Resigned Employees (by month, with the resignation reason). The full name
  * prints as one column — a reader filing this by hand wants "Juan Dela Cruz", not three
  * cells to reassemble — and rows within a sheet are still ordered by surname, because that
  * is the order a personnel file is kept in even when the column itself is not split.
@@ -1230,8 +1222,17 @@ async function exportEmployeeCounts(
     ];
   };
 
+  const YELLOW = { type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: "FFFFFF00" } };
+  /** A total line in yellow, wide enough to cover its text (No., ID and Full Name cells). */
+  function totalLine(ws: Sheet, text: string) {
+    const row = ws.addRow([text]);
+    row.getCell(1).font = { bold: true };
+    for (let c = 1; c <= 3; c++) row.getCell(c).fill = YELLOW;
+    return row;
+  }
+
   function addRows(ws: Sheet, rows: Employee[], dateLabel: string, extra?: string) {
-    const columns = [...BASE_COLUMNS, { header: dateLabel, width: 18 }];
+    const columns = [{ header: "No.", width: 6 }, ...BASE_COLUMNS, { header: dateLabel, width: 18 }];
     if (extra) columns.push({ header: extra, width: 20 });
     ws.columns = columns.map((c) => ({ width: c.width }));
 
@@ -1241,8 +1242,9 @@ async function exportEmployeeCounts(
       c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0E5E56" } };
     });
 
-    [...rows].sort(bySurname).forEach((e) => {
-      const row = [
+    [...rows].sort(bySurname).forEach((e, i) => {
+      const row: (string | number)[] = [
+        i + 1,
         e.companyIdNumber || "",
         filingName(e),
         ...nameColumns(e),
@@ -1263,34 +1265,28 @@ async function exportEmployeeCounts(
   const currentSheet = wb.addWorksheet("Current Employees");
   addRows(currentSheet, current, "Date Hired");
   currentSheet.addRow([]);
-  const currentTotal = currentSheet.addRow([`Total Current Employees: ${current.length}`]);
-  currentTotal.getCell(1).font = { bold: true };
+  totalLine(currentSheet, `Total Current Employees: ${current.length}`);
   currentSheet.addRow([]);
-  const newHireTitle = currentSheet.addRow([`New Hires (${newHires.length})`]);
+  // New Hires: hired, but their onboarding date is still ahead — labelled Upcoming.
+  const newHireTitle = currentSheet.addRow([`New Hires (${newHires.length})`, "", "UPCOMING — hired, not yet onboarded"]);
+  currentSheet.mergeCells(newHireTitle.number, 1, newHireTitle.number, 2);
   newHireTitle.getCell(1).font = { bold: true, color: { argb: "FF0A2E2A" } };
   newHireTitle.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE4F0EE" } };
+  newHireTitle.getCell(3).font = { bold: true, color: { argb: "FF92400E" } };
+  newHireTitle.getCell(3).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFDE68A" } };
   addRows(currentSheet, newHires, "Date Hired");
   currentSheet.addRow([]);
-  const newHireTotal = currentSheet.addRow([`Total New Hires: ${newHires.length}`]);
-  newHireTotal.getCell(1).font = { bold: true };
+  totalLine(currentSheet, `Total New Hires: ${newHires.length}`);
 
-  // Under 6-Month Probation: already working, but short of the milestone that ends it.
-  const probationary = current.filter((e) => isUnderProbation(e));
-  const probationSheet = wb.addWorksheet("Under 6-Month Probation");
-  addRows(probationSheet, probationary, "Date Hired");
-  probationSheet.addRow([]);
-  const probationTotal = probationSheet.addRow([`Total: ${probationary.length}`]);
-  probationTotal.getCell(1).font = { bold: true };
+  // (The Under 6-Month Probation sheet is no longer exported.)
 
-  // Resigned Employees: grouped by month of resignation, earliest month first, each month
-  // under a yellow heading, numbered within it and closed with its own total. Anyone with
-  // no resignation date on record comes last, in a group of their own.
   const resignedSheet = wb.addWorksheet("Resigned Employees");
   const resignedColumns = [
     { header: "No.", width: 6 },
     ...BASE_COLUMNS,
     { header: "Date Hired", width: 18 },
     { header: "Date of Resignation", width: 20 },
+    { header: "Reason", width: 34 },
   ];
   resignedSheet.columns = resignedColumns.map((c) => ({ width: c.width }));
   const resignedHeader = resignedSheet.addRow(resignedColumns.map((c) => c.header));
@@ -1316,10 +1312,11 @@ async function exportEmployeeCounts(
       key === "none"
         ? "NO RESIGNATION DATE"
         : format(new Date(`${key}-01T00:00:00`), "MMMM yyyy").toUpperCase();
+    // Yellow on the month and year only (the No. and ID cells under it), not the whole row.
     const heading = resignedSheet.addRow([label]);
-    resignedSheet.mergeCells(heading.number, 1, heading.number, resignedColumns.length);
+    resignedSheet.mergeCells(heading.number, 1, heading.number, 2);
     heading.getCell(1).font = { bold: true };
-    heading.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFFF00" } };
+    heading.getCell(1).fill = YELLOW;
 
     people.forEach(({ e, day }, i) => {
       resignedSheet.addRow([
@@ -1331,14 +1328,14 @@ async function exportEmployeeCounts(
         e.immediateSupervisor || "",
         e.dateHired ? formatDate(e.dateHired, "MMMM d, yyyy") : "",
         day ? formatDate(`${day}T00:00:00.000Z`, "MMMM dd, yyyy") : "",
+        // From COE for Resigned → Resignation Reason on the employee's page.
+        separationReason(e, coeIndex),
       ]);
     });
-    const monthTotal = resignedSheet.addRow([`TOTAL: ${people.length}`]);
-    monthTotal.getCell(1).font = { bold: true };
+    totalLine(resignedSheet, `TOTAL: ${people.length}`);
     resignedSheet.addRow([]);
   });
-  const resignedTotal = resignedSheet.addRow([`Total Resigned: ${resigned.length}`]);
-  resignedTotal.getCell(1).font = { bold: true };
+  totalLine(resignedSheet, `Total Resigned: ${resigned.length}`);
 
   const buffer = await wb.xlsx.writeBuffer();
   const blob = new Blob([buffer], {
@@ -2244,10 +2241,12 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
         ? ["Employee Name", "Position", "Department", "Immediate Supervisor", "3rd Month Date"]
         : isSixth
           ? [
+              "No.",
               "Employee Name",
               "Position",
               "Department",
               "Salary Status",
+              "Previous Gross Salary",
               "Percentage",
               "New Gross",
               "6th Month Date",
@@ -2255,7 +2254,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
               "Not Regularized Reason",
             ]
           : isBirthday
-            ? ["No.", "Employee Name", "Position", "Department", "Email", "Birthday", "Notes"]
+            ? ["No.", "Employee Name", "Birthday"]
             : isReliever
               ? [
                   "Employee Name",
@@ -2268,16 +2267,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                   "Contract End Date",
                   "Notes",
                 ]
-              : [
-              "Employee Name",
-              "Position",
-              "Department",
-              "Immediate Supervisor",
-              "Email",
-              MILESTONE_LABELS[type],
-              // The anniversary sheets end at the milestone date, as in the reference format.
-              ...(isAnniversary ? [] : ["Notes"]),
-            ];
+              : ["No.", "Employee Name", MILESTONE_LABELS[type]];
 
       /** The salary review as the export states it, straight off the employee record. */
       function salaryCells(id: string): [string, string] {
@@ -2291,6 +2281,16 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
         if (review === "asIs") return ["As Is Salary", ""];
         // Never "As Is Salary" by default — nothing has been decided for this employee yet.
         return [NOT_SET_LABEL, ""];
+      }
+
+      /** Gross before the 6th-month raise — only for "With Increase", blank otherwise. */
+      function previousGrossFor(e?: Employee): string {
+        if (!e || e.sixthMonthSalaryReview !== "withIncrease") return "";
+        const applied = (e.salaryHistory || []).find((h) => h.reason === REGULARIZATION_RAISE_REASON);
+        const value = parseAmount(
+          applied ? applied.previousTotalMonthlyGrossCompensation : e.totalMonthlyGrossCompensation
+        );
+        return value !== null ? formatAmount(value) : "";
       }
 
       /** "Sibal, Eren Mae I. (Temporary Reliever)" in the regular milestone sheets. */
@@ -2334,10 +2334,12 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
           // The "New Total Monthly Gross" from the employee's milestone; blank when none.
           const newGross = employee ? regularizationNewGross(employee) : null;
           return [
+            index + 1,
             nameCell(r),
             r.position,
             r.department,
             status,
+            previousGrossFor(employee),
             percent,
             newGross ? `₱${newGross}` : "",
             formatDate(r.date, "MMMM d, yyyy"),
@@ -2345,20 +2347,15 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
             noteFor(r.id, "sixth") === NOT_REGULARIZED ? reasonFor(r.id, "sixth") : "",
           ];
         }
-        return [
-          nameCell(r),
-          r.position,
-          r.department,
-          r.supervisor,
-          r.email,
-          formatDate(r.displayDate || r.date, "MMMM d, yyyy"),
-          ...(isAnniversary ? [] : [noteFor(r.id, type)]),
-        ];
+        // 1 / 2 / 3 Years: No., name and the milestone date only.
+        return [index + 1, nameCell(r), formatDate(r.displayDate || r.date, "MMMM d, yyyy")];
       }
 
       function buildSheet(monthLabel: string, sheetName: string, sheetRows: FilterRow[]) {
         const ws = wb.addWorksheet(sheetName);
-        ws.columns = columns.map((c) => ({ width: c === "No." ? 8 : c.length < 16 ? 22 : c.length + 6 }));
+        ws.columns = columns.map((c) => ({
+          width: c === "No." ? 8 : c === "Employee Name" ? 32 : c.length < 16 ? 22 : c.length + 6,
+        }));
 
         const titleRow = ws.addRow([sheetTitle(monthLabel)]);
         ws.mergeCells(titleRow.number, 1, titleRow.number, columns.length);
@@ -2376,7 +2373,37 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
           cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0E5E56" } };
         });
 
-        sheetRows.forEach((r, i) => {
+        if (isBirthday) {
+          const solid = (argb: string) => ({ type: "pattern" as const, pattern: "solid" as const, fgColor: { argb } });
+          const edge = { style: "thin" as const, color: { argb: "FF1F2937" } };
+          const byDay = new Map<string, FilterRow[]>();
+          sheetRows.forEach((r) => byDay.set(r.date.slice(0, 10), [...(byDay.get(r.date.slice(0, 10)) || []), r]));
+          [...byDay.values()].forEach((group, g) => {
+            const first = ws.rowCount + 1;
+            group.forEach((r, i) => {
+              const row = ws.addRow([
+                i === 0 ? group.length : "",
+                r.name,
+                formatDate(r.displayDate || r.date, "MMMM d"),
+              ]);
+              for (let c = 1; c <= 3; c++) {
+                const cell = row.getCell(c);
+                cell.fill = solid(g % 2 === 0 ? "FFDCE6F1" : "FFC5D9F1");
+                cell.alignment = { vertical: "middle" };
+                cell.border = {
+                  left: c <= 2 ? edge : undefined,
+                  right: c === 1 || c === 3 ? edge : undefined,
+                  top: i === 0 ? edge : undefined,
+                  bottom: i === group.length - 1 ? edge : undefined,
+                };
+              }
+            });
+            const last = ws.rowCount;
+            if (last > first) ws.mergeCells(first, 1, last, 1);
+            ws.getCell(first, 1).font = { bold: true };
+            ws.getCell(first, 1).alignment = { horizontal: "center", vertical: "middle" };
+          });
+        } else sheetRows.forEach((r, i) => {
           const added = ws.addRow(rowFor(r, i));
           // Not Regularized reads in red, as it does on screen.
           if (isSixth && noteFor(r.id, "sixth") === NOT_REGULARIZED) {
@@ -2396,22 +2423,6 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
           }
         }
 
-        // Beneath the total: the same people grouped under each birthday date.
-        if (isBirthday && sheetRows.length > 0) {
-          const byDay = new Map<string, FilterRow[]>();
-          sheetRows.forEach((r) => {
-            const day = formatDate(r.date, "MMMM dd");
-            byDay.set(day, [...(byDay.get(day) || []), r]);
-          });
-          byDay.forEach((people, day) => {
-            ws.addRow([]);
-            const dayRow = ws.addRow([`${day} (${people.length})`]);
-            ws.mergeCells(dayRow.number, 1, dayRow.number, 2);
-            dayRow.getCell(1).font = { bold: true, color: { argb: "FF0A2E2A" } };
-            dayRow.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE4F0EE" } };
-            people.forEach((p, i) => ws.addRow([i + 1, p.name]));
-          });
-        }
       }
 
       function computeRowsFor(kind: MilestoneType): FilterRow[] {
