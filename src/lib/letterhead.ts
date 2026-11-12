@@ -2,7 +2,7 @@ import type JSZip from "jszip";
 import type { PDFDocument } from "pdf-lib";
 
 /**
- * The Realcognita letterhead ("Template New Realcognita.pdf"): the logo and contact strip
+ * The Realcognita letterhead ("Realcognita Template.pdf"): the logo and contact strip
  * across the top of every page, the green address bar across the bottom. Both images were
  * taken straight from that PDF and live in public/letterhead/.
  *
@@ -10,10 +10,10 @@ import type { PDFDocument } from "pdf-lib";
  * step, so the letterhead is the same everywhere and changing it again means replacing
  * those two images. The old letterhead — a full-page background picture — is removed.
  */
-const HEADER_URL = "/letterhead/header.jpg";
+const HEADER_URL = "/letterhead/header.png";
 const FOOTER_URL = "/letterhead/footer.png";
 /** Height ÷ width of each image (2001×353 and 2001×117 pixels). */
-const HEADER_RATIO = 353 / 2001;
+const HEADER_RATIO = 353 / 2000;
 const FOOTER_RATIO = 117 / 2001;
 /** Space kept between the pictures and the text, in twips (1/20 pt). */
 const HEADER_GAP = 120;
@@ -146,7 +146,7 @@ const relsPathFor = (part: string) => part.replace(/^word\//, "word/_rels/") + "
  */
 export async function applyLetterheadToDocx(zip: JSZip): Promise<void> {
   const { header, footer } = await letterheadImages();
-  zip.file("word/media/letterhead-header.jpg", header);
+  zip.file("word/media/letterhead-header.png", header);
   zip.file("word/media/letterhead-footer.png", footer);
 
   let types = await zip.file("[Content_Types].xml")!.async("text");
@@ -195,7 +195,7 @@ export async function applyLetterheadToDocx(zip: JSZip): Promise<void> {
       zip,
       relsPathFor(part),
       REL_IMAGE,
-      kind === "header" ? "media/letterhead-header.jpg" : "media/letterhead-footer.png"
+      kind === "header" ? "media/letterhead-header.png" : "media/letterhead-footer.png"
     );
     const run =
       kind === "header"
@@ -308,7 +308,7 @@ const latin1Encode = (s: string) => {
 export async function applyLetterheadToPdf(pdf: PDFDocument): Promise<void> {
   const { PDFName, PDFArray, PDFRawStream, decodePDFRawStream } = await import("pdf-lib");
   const { header, footer } = await letterheadImages();
-  const headerImg = await pdf.embedJpg(header);
+  const headerImg = await pdf.embedPng(header);
   const footerImg = await pdf.embedPng(footer);
 
   for (const page of pdf.getPages()) {
