@@ -1156,6 +1156,15 @@ export default function EmployeeDetailPage({
               onChange={(e) => update(employee.id, { realcognitaEmail: e.target.value })}
             />
           </FieldGroup>
+          <FieldGroup label="Personal Email">
+            <Input
+              type="email"
+              placeholder="e.g. juan.delacruz@gmail.com"
+              value={employee.personalEmail || ""}
+              disabled={!isEditing}
+              onChange={(e) => update(employee.id, { personalEmail: e.target.value })}
+            />
+          </FieldGroup>
           <FieldGroup label="Home Address">
             <Input
               value={employee.homeAddress || ""}

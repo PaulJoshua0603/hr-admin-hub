@@ -73,6 +73,8 @@ import {
 import { EmployeeNameInput } from "@/components/EmployeeNameInput";
 import { employeeNameParts } from "@/lib/employeeNamePdf";
 import GroceryPackage from "./GroceryPackage";
+import { teamOf } from "@/lib/groceryPackage";
+import { EmployeeAvatar } from "@/components/ProfilePhoto";
 import {
   buildThirdMonthEvaluationDocx,
   thirdMonthEvaluationFileName,
@@ -1129,6 +1131,9 @@ export default function EmployeesPage() {
 
           return (
             <Card key={e.id} className="flex items-center justify-between hover:border-accent transition-colors">
+              <Link href={`/employees/${e.id}`} className="mr-3 shrink-0" aria-hidden tabIndex={-1}>
+                <EmployeeAvatar path={e.photoPath} name={e.name} />
+              </Link>
               <Link href={`/employees/${e.id}`} className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-ink">
                   {e.name}
@@ -1519,6 +1524,8 @@ type FilterRow = {
   replacedPosition?: string;
   /** Only on a New Hires row. */
   hobbies?: string;
+  /** The employee's team (Grocery Package), shown in the milestone lists. */
+  team?: string;
   /** Which milestone a row is for — tells 1, 2 and 3 Years apart under Milestones Date. */
   milestoneKind?: MilestoneType;
   /** Only on a W/Increase row: the 6th-month raise, amounts formatted without the ₱. */
@@ -1633,6 +1640,8 @@ function WIncreaseTable({ rows }: { rows: FilterRow[] }) {
             <th className="px-3 py-2">Employee Name</th>
             <th className="px-3 py-2">Position</th>
             <th className="px-3 py-2">Department</th>
+            <th className="px-3 py-2">Team</th>
+            <th className="px-3 py-2">Immediate Supervisor</th>
             <th className="px-3 py-2">6th Month Appraisal / Regularization Date</th>
             <th className="px-3 py-2">Previous Total Monthly Gross</th>
             <th className="px-3 py-2">Increase (%)</th>
@@ -1649,6 +1658,8 @@ function WIncreaseTable({ rows }: { rows: FilterRow[] }) {
               </td>
               <td className="px-3 py-2 text-ink-muted">{r.position || "—"}</td>
               <td className="px-3 py-2 text-ink-muted">{r.department || "—"}</td>
+              <td className="px-3 py-2 text-ink-muted">{r.team || "—"}</td>
+              <td className="px-3 py-2 text-ink-muted">{r.supervisor || "—"}</td>
               <td className="whitespace-nowrap px-3 py-2 text-ink-muted">{formatDate(r.date, "MMMM d, yyyy")}</td>
               <td className="px-3 py-2 tabular-nums text-ink-muted">{r.previousGross ? `₱${r.previousGross}` : "—"}</td>
               <td className="px-3 py-2 tabular-nums text-ink-muted">{r.increasePercent ? `${r.increasePercent}%` : "—"}</td>
@@ -1927,6 +1938,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
       department: e.department || "",
       email: e.realcognitaEmail || "",
       supervisor: e.immediateSupervisor || "",
+      team: teamOf(e)?.team || "",
       date,
     };
   }
@@ -2781,6 +2793,8 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                                   <th className="px-3 py-2">Employee Name</th>
                                   <th className="px-3 py-2">Position</th>
                                   <th className="px-3 py-2">Department</th>
+                                  <th className="px-3 py-2">Team</th>
+                                  <th className="px-3 py-2">Immediate Supervisor</th>
                                   <th className="px-3 py-2">
                                     {kind === "birthday" ? "Birthday Date" : "Milestone Date"}
                                   </th>
@@ -2798,6 +2812,8 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                                     </td>
                                     <td className="px-3 py-2 text-ink-muted">{r.position || "—"}</td>
                                     <td className="px-3 py-2 text-ink-muted">{r.department || "—"}</td>
+                                    <td className="px-3 py-2 text-ink-muted">{r.team || "—"}</td>
+                                    <td className="px-3 py-2 text-ink-muted">{r.supervisor || "—"}</td>
                                     <td className="whitespace-nowrap px-3 py-2 text-ink-muted">
                                       {formatDate(r.displayDate || r.date, "MMMM d, yyyy")}
                                     </td>
@@ -2840,6 +2856,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                         <th className="px-3 py-2">Employee Name</th>
                         <th className="px-3 py-2">Position</th>
                         <th className="px-3 py-2">Department</th>
+                        {isMilestoneView && <th className="px-3 py-2">Team</th>}
                         <th className="px-3 py-2">Immediate Supervisor</th>
                         {isRelieverView ? (
                           <>
@@ -2882,6 +2899,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                           </td>
                           <td className="px-3 py-2 text-ink-muted">{r.position || "—"}</td>
                           <td className="px-3 py-2 text-ink-muted">{r.department || "—"}</td>
+                          {isMilestoneView && <td className="px-3 py-2 text-ink-muted">{r.team || "—"}</td>}
                           <td className="px-3 py-2 text-ink-muted">{r.supervisor || "—"}</td>
                           {isRelieverView ? (
                             [
@@ -3088,6 +3106,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                           <th className="px-3 py-2">Employee Name</th>
                           <th className="px-3 py-2">Position</th>
                           <th className="px-3 py-2">Department</th>
+                          <th className="px-3 py-2">Team</th>
                           <th className="px-3 py-2">Immediate Supervisor</th>
                           <th className="px-3 py-2">Hire/Onboarding Date</th>
                           <th className="px-3 py-2">3rd Month Milestone Date</th>
@@ -3106,6 +3125,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                             </td>
                             <td className="px-3 py-2 text-ink-muted">{r.position || "—"}</td>
                             <td className="px-3 py-2 text-ink-muted">{r.department || "—"}</td>
+                            <td className="px-3 py-2 text-ink-muted">{r.team || "—"}</td>
                             <td className="px-3 py-2 text-ink-muted">{r.supervisor || "—"}</td>
                             {[r.hiredDate, r.thirdDate, r.sixthDate, r.absorbedDate].map((d, i) => (
                               <td

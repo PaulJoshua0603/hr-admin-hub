@@ -625,6 +625,7 @@ export type Employee = {
   companyIdNumber?: string;
   biometricsNo?: string;
   realcognitaEmail?: string;
+  personalEmail?: string;
   homeAddress?: string;
   homeCity?: string; // city/municipality, filled separately for docx templates like "City, Philippines"
   gender?: string;

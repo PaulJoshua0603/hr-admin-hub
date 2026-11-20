@@ -26,6 +26,56 @@ async function shrink(file: File, maxSide = MAX_SIDE, quality = 0.85): Promise<B
   );
 }
 
+/** Signed links already fetched this session, so a list re-render asks Supabase once per photo. */
+const signedUrls = new Map<string, Promise<string | null>>();
+function signedUrlFor(path: string): Promise<string | null> {
+  let url = signedUrls.get(path);
+  if (!url) {
+    url = supabase.storage
+      .from(BUCKET)
+      .createSignedUrl(path, 60 * 60)
+      .then(({ data }) => data?.signedUrl ?? null);
+    signedUrls.set(path, url);
+  }
+  return url;
+}
+
+/** A small round picture for lists: the photo when there is one, otherwise initials. */
+export function EmployeeAvatar({ path, name, size = 40 }: { path?: string; name: string; size?: number }) {
+  const [url, setUrl] = useState<{ path: string; url: string | null } | null>(null);
+  useEffect(() => {
+    if (!path || !supabaseReady) return;
+    let alive = true;
+    void signedUrlFor(path).then((u) => {
+      if (alive) setUrl({ path, url: u });
+    });
+    return () => {
+      alive = false;
+    };
+  }, [path]);
+  const shown = path && url?.path === path ? url.url : null;
+  const initials = name
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => w[0])
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+  return (
+    <span
+      className="flex shrink-0 items-center justify-center overflow-hidden rounded-full border border-border bg-background text-xs font-semibold text-ink-muted"
+      style={{ width: size, height: size }}
+    >
+      {shown ? (
+        // eslint-disable-next-line @next/next/no-img-element -- signed Supabase URL, not a static asset
+        <img src={shown} alt="" className="h-full w-full rounded-full object-cover" />
+      ) : (
+        initials || "?"
+      )}
+    </span>
+  );
+}
+
 /**
  * The employee's profile picture: click or drag a photo onto it to set it (Edit mode),
  * stored in Supabase Storage with only its path on the employee record.
