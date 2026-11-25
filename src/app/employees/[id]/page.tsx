@@ -16,7 +16,7 @@ import {
 } from "@/lib/groceryPackage";
 import { TeamPicker } from "../GroceryPackage";
 import { ProfilePhoto } from "@/components/ProfilePhoto";
-import { resignedCoeIndex, separationDate as separationDateOf } from "@/lib/employeeStatus";
+import { hasLeft, resignedCoeIndex, separationDate as separationDateOf } from "@/lib/employeeStatus";
 import { useNotifications } from "@/lib/notificationContext";
 import { addDaysISO, addMonthsISO, daysSince, formatDate, isOverdue, nextMondayISO, todayISO } from "@/lib/dates";
 import {
@@ -646,7 +646,7 @@ export default function EmployeeDetailPage({
     });
   }
 
-  const milestones = employee.dateHired && !employee.lastDay
+  const milestones = employee.dateHired && !hasLeft(employee)
     ? (Object.keys(EMPLOYMENT_MILESTONE_LABELS) as EmploymentMilestoneKey[]).map((key) => ({
         key,
         label: EMPLOYMENT_MILESTONE_LABELS[key],
@@ -1493,9 +1493,11 @@ export default function EmployeeDetailPage({
         <Card>
           <h2 className="font-display text-lg text-ink">Employment milestones</h2>
           <p className="mt-1 text-xs text-ink-muted">
-            {employee.lastDay
+            {employee.lastDay && hasLeft(employee)
               ? "Milestone tracking is hidden — a COE for Resigned has been generated for this employee."
-              : "Milestone alerts trigger automatically on the Dashboard — no action needed here."}
+              : employee.lastDay
+                ? `Last day is ${formatDate(employee.lastDay, "MMMM d, yyyy")} — still a current employee until then; moves to Resigned on that day.`
+                : "Milestone alerts trigger automatically on the Dashboard — no action needed here."}
           </p>
 
           {milestones.length > 0 && (
@@ -1564,7 +1566,7 @@ export default function EmployeeDetailPage({
               onRevert={revertRegularizationRaise}
             />
           )}
-          {milestones.length === 0 && !employee.lastDay && (
+          {milestones.length === 0 && !hasLeft(employee) && (
             <p className="mt-4 text-xs text-ink-muted">
               Set the onboarding date above to auto-calculate milestones.
             </p>

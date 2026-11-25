@@ -9,6 +9,7 @@ import { inRange, milestoneDate, rangeFor } from "@/lib/dateRanges";
 import { useNotifications } from "@/lib/notificationContext";
 import { milestoneNoteTone, sixthMonthNoteLabels, sixthMonthNoteOptions } from "@/lib/milestoneNotes";
 import type { Employee, MilestoneNote } from "@/types";
+import { hasLeft } from "@/lib/employeeStatus";
 
 export type SixthMonthRow = {
   id: string;
@@ -27,7 +28,7 @@ export type SixthMonthRow = {
  */
 export function sixthMonthRows(employees: Employee[], start: string, end: string): SixthMonthRow[] {
   return employees
-    .filter((e) => e.dateHired && !e.lastDay && e.resignedStatus !== "resigned")
+    .filter((e) => e.dateHired && !hasLeft(e))
     .map((e) => ({
       id: e.id,
       name: e.name,

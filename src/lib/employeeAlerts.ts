@@ -7,6 +7,7 @@ import {
   getLackingRequirements,
 } from "@/types";
 import { addDaysISO, addMonthsISO, formatDate, isOverdue, isDueToday } from "@/lib/dates";
+import { hasLeft } from "./employeeStatus";
 
 export type EmployeeAlert = {
   id: string;
@@ -76,7 +77,7 @@ export function computeEmployeeAlerts(employees: Employee[]): EmployeeAlert[] {
     }
 
     // Employment milestones — only for active (not offboarded) employees with a hire date.
-    if (e.dateHired && !e.lastDay) {
+    if (e.dateHired && !hasLeft(e)) {
       (Object.keys(EMPLOYMENT_MILESTONE_MONTHS) as EmploymentMilestoneKey[]).forEach((key) => {
         const milestoneDate = addMonthsISO(e.dateHired!, EMPLOYMENT_MILESTONE_MONTHS[key]);
         const offsets = EMPLOYMENT_MILESTONE_REMINDER_OFFSETS[key];

@@ -20,6 +20,7 @@ import { Button, Card, Input, Pill, SectionHeading } from "@/components/ui";
 import type { CalendarEvent, Employee, Task } from "@/types";
 import { EMPLOYMENT_MILESTONE_LABELS, EMPLOYMENT_MILESTONE_MONTHS, type EmploymentMilestoneKey } from "@/types";
 import { addMonthsISO } from "@/lib/dates";
+import { hasLeft } from "@/lib/employeeStatus";
 
 type DayEvent = { label: string; tone: "accent" | "warn" | "success"; time?: string; employeeId?: string };
 
@@ -75,7 +76,7 @@ export default function CalendarPage() {
     // Employment milestones — 3rd month, 6th month, 1-year anniversary,
     // computed from each employee's Hired/Onboarding Date.
     for (const e of employees) {
-      if (!e.dateHired || e.lastDay) continue;
+      if (!e.dateHired || hasLeft(e)) continue;
       (Object.keys(EMPLOYMENT_MILESTONE_MONTHS) as EmploymentMilestoneKey[]).forEach((mKey) => {
         const milestoneDate = addMonthsISO(e.dateHired!, EMPLOYMENT_MILESTONE_MONTHS[mKey]);
         const key = format(parseISO(milestoneDate), "yyyy-MM-dd");

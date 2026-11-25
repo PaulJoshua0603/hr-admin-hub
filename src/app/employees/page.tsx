@@ -59,6 +59,7 @@ import {
   relieverTag as relieverTagOf,
   separationDate as separationDateOf,
   separationReason,
+  hasLeft,
 } from "@/lib/employeeStatus";
 import { EmployeeRelieverTag, RelieverTag } from "@/components/RelieverTag";
 import {
@@ -113,7 +114,7 @@ function isKnownActiveStatus(status: string): boolean {
 }
 
 function isActive(e: Employee): boolean {
-  return !e.lastDay && e.resignedStatus !== "resigned";
+  return !hasLeft(e);
 }
 
 export default function EmployeesPage() {

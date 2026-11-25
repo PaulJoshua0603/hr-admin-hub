@@ -59,6 +59,30 @@ export function countableEmployees(employees: Employee[]): Employee[] {
  * Anyone who also has a COE with Purpose is left out — a purpose COE is issued to
  * someone still employed, so it keeps them off the resigned list.
  */
+/** Today in this computer's time zone, as "2026-11-25". */
+function todayKey(now: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+/**
+ * Whether a Separation / Last Day has come. The employee moves to Resigned on that day
+ * itself: last day November 27 → current through November 26, resigned from November 27.
+ */
+export function lastDayArrived(lastDay: string, now: Date = new Date()): boolean {
+  return lastDay.slice(0, 10) <= todayKey(now);
+}
+
+/**
+ * Left the company as of today, for screens that only have the employee record: a Last
+ * Day that has arrived, or marked resigned with no date at all. A future Last Day keeps
+ * them current.
+ */
+export function hasLeft(e: Pick<Employee, "lastDay" | "resignedStatus">, now: Date = new Date()): boolean {
+  if (e.lastDay) return lastDayArrived(e.lastDay, now);
+  return e.resignedStatus === "resigned";
+}
+
 export function resignedCoeIndex(coeRequests: COERequest[]): Map<string, string> {
   const withPurpose = new Set(
     coeRequests.filter((r) => r.category !== "endOfEmployment").map((r) => nameKey(r.employeeName))
@@ -123,7 +147,8 @@ export function separationDate(
   coeIndex: Map<string, string>,
   now: Date = new Date()
 ): string | null {
-  if (e.lastDay) return e.lastDay;
+  // A Separation / Last Day still ahead means they are current until that day arrives.
+  if (e.lastDay) return lastDayArrived(e.lastDay, now) ? e.lastDay : null;
   const fromCoe = coeIndex.get(nameKey(e.name));
   // A COE for Resigned dated before a rehire belongs to the earlier employment.
   const beforeRehire = !!e.rehire && !!fromCoe && fromCoe.slice(0, 10) < e.rehire.rehireDate.slice(0, 10);

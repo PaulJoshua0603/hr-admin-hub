@@ -10,6 +10,7 @@ import { useNotifications } from "@/lib/notificationContext";
 import { useAuth } from "@/lib/authContext";
 import { TasksIcon, EmployeesIcon, ReportsIcon, ChevronIcon } from "@/components/icons";
 import { getMissingCriticalItems, getLackingRequirements, type Employee, type ReminderNote, type Task } from "@/types";
+import { hasLeft } from "@/lib/employeeStatus";
 
 function isProfileComplete(e: Employee): boolean {
   const hasDetails = !!e.birthday && !!e.dateHired;
@@ -62,14 +63,14 @@ export default function DashboardPage() {
     employees.length > 0 ? Math.round((employeesComplete / employees.length) * 100) : 0;
 
   const allBirthdays = employees.filter((e) => e.birthday);
-  const third = employees.filter((e) => e.dateHired && !e.lastDay);
+  const third = employees.filter((e) => e.dateHired && !hasLeft(e));
   const sixth = third;
   const oneYear = third;
   const incompleteRecords = employees.filter(
     (e) => !isProfileComplete(e) || getLackingRequirements(e).length > 0
   );
   const separatedEmployees = employees.filter(
-    (e) => !!e.lastDay || e.resignedStatus === "resigned"
+    (e) => hasLeft(e)
   );
 
   const firstName = getFirstName(
