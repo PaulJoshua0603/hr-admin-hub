@@ -75,6 +75,8 @@ import { EmployeeNameInput } from "@/components/EmployeeNameInput";
 import { employeeNameParts } from "@/lib/employeeNamePdf";
 import GroceryPackage from "./GroceryPackage";
 import { teamOf } from "@/lib/groceryPackage";
+import { dayISO } from "@/lib/dateRanges";
+import { PicturesView } from "./PicturesView";
 import { EmployeeAvatar } from "@/components/ProfilePhoto";
 import {
   buildThirdMonthEvaluationDocx,
@@ -1368,6 +1370,8 @@ function EmployeeCountSummary({ employees }: { employees: Employee[] }) {
   // Same split the Active/Resigned view uses, so the two screens cannot disagree.
   const { active: current, newHires, resigned, coeIndex } = groupEmployees(employees, coeRequests);
 
+  // Often asked for: the count with and without Team Simonds Pampanga.
+  const simonds = current.filter((e) => teamOf(e)?.team === SIMONDS_PAMPANGA).length;
   const groups: { key: CountGroup; label: string; list: Employee[] }[] = [
     { key: "current", label: "Current Employees", list: current },
     { key: "newHires", label: "New Hires (future onboarding date)", list: newHires },
@@ -1399,6 +1403,11 @@ function EmployeeCountSummary({ employees }: { employees: Employee[] }) {
             key={g.key}
             value={g.list.length}
             label={g.label}
+            note={
+              g.key === "current"
+                ? `Team Simonds Pampanga: ${simonds} · Excluding Simonds Pampanga: ${current.length - simonds}`
+                : undefined
+            }
             hint={openGroup === g.key ? "Hide list" : "View list"}
             active={openGroup === g.key}
             onClick={() => toggle(g.key)}
@@ -1492,7 +1501,8 @@ type MilestoneType =
   | "threeYears"
   // Views over the ones above: 1, 2 and 3 Years together, and the 6th-month raises.
   | "milestonesDate"
-  | "wIncrease";
+  | "wIncrease"
+  | "pictures";
 
 /** Months after the Hired/Onboarding Date each milestone falls on (0: not counted from it). */
 const MILESTONE_MONTHS: Record<MilestoneType, number> = {
@@ -1505,7 +1515,10 @@ const MILESTONE_MONTHS: Record<MilestoneType, number> = {
   threeYears: 36,
   milestonesDate: 0,
   wIncrease: 6,
+  pictures: 0,
 };
+
+const SIMONDS_PAMPANGA = "Team Simonds Pampanga";
 
 /** Employment anniversaries: exported like the screenshot reference, "November 2026 – 1 Year". */
 const ANNIVERSARIES: MilestoneType[] = ["oneYear", "twoYears", "threeYears"];
@@ -1564,6 +1577,20 @@ function milestoneDateISO(dateHired: string, months: number): string {
   return d.toISOString();
 }
 
+/**
+ * The birthday's occurrence inside [start, end] — any year the range covers — or null.
+ * Matching is on month and day only, so April 1–30, 2027 finds an April 13 birthday.
+ */
+function birthdayInRange(birthday: string, start: string, end: string): string | null {
+  const from = +start.slice(0, 4);
+  const to = +end.slice(0, 4);
+  for (let year = from; year <= to; year++) {
+    const occurrence = birthdayThisYear(birthday, year);
+    if (inRange(occurrence, start, end)) return occurrence;
+  }
+  return null;
+}
+
 function birthdayThisYear(birthday: string, year: number): string {
   const b = new Date(birthday);
   return new Date(Date.UTC(year, b.getUTCMonth(), b.getUTCDate())).toISOString();
@@ -1579,7 +1606,7 @@ function startOfWeekISO(base: Date): string {
   const diff = (day === 0 ? -6 : 1) - day; // Monday start
   const monday = new Date(base);
   monday.setDate(base.getDate() + diff);
-  return monday.toISOString().slice(0, 10);
+  return dayISO(monday);
 }
 function endOfWeekISO(base: Date): string {
   const start = startOfWeekISO(base);
@@ -1588,16 +1615,16 @@ function endOfWeekISO(base: Date): string {
   return d.toISOString().slice(0, 10);
 }
 function startOfMonthISO(base: Date): string {
-  return new Date(base.getFullYear(), base.getMonth(), 1).toISOString().slice(0, 10);
+  return dayISO(new Date(base.getFullYear(), base.getMonth(), 1));
 }
 function endOfMonthISO(base: Date): string {
-  return new Date(base.getFullYear(), base.getMonth() + 1, 0).toISOString().slice(0, 10);
+  return dayISO(new Date(base.getFullYear(), base.getMonth() + 1, 0));
 }
 function startOfYearISO(base: Date): string {
-  return new Date(base.getFullYear(), 0, 1).toISOString().slice(0, 10);
+  return dayISO(new Date(base.getFullYear(), 0, 1));
 }
 function endOfYearISO(base: Date): string {
-  return new Date(base.getFullYear(), 11, 31).toISOString().slice(0, 10);
+  return dayISO(new Date(base.getFullYear(), 11, 31));
 }
 
 function ddmmyyyy(iso: string): string {
@@ -1622,6 +1649,7 @@ const MILESTONE_LABELS: Record<MilestoneType, string> = {
   threeYears: "3 Years",
   milestonesDate: "Milestones Date",
   wIncrease: "W/Increase",
+  pictures: "Pictures",
 };
 
 /** Employees who received an increase at their 6th Month Appraisal / Regularization. */
@@ -1963,14 +1991,9 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
   /** Current employees whose birthday this year falls in the range, soonest first. */
   function birthdayRows(): FilterRow[] {
     return employees
-      .filter(
-        (e) =>
-          e.birthday &&
-          separationDate(e) === null &&
-          inRange(birthdayThisYear(e.birthday, today.getFullYear()), startDate, endDate)
-      )
+      .filter((e) => e.birthday && separationDate(e) === null && birthdayInRange(e.birthday, startDate, endDate))
       .map((e) => ({
-        ...toFilterRow(e, birthdayThisYear(e.birthday!, today.getFullYear())),
+        ...toFilterRow(e, birthdayInRange(e.birthday!, startDate, endDate)!),
         // Filtered and sorted on this year's occurrence, but shown as recorded.
         displayDate: e.birthday,
         milestoneKind: "birthday" as const,
@@ -2037,6 +2060,12 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
     if (milestoneType === "relieverEnd") return relieverRows();
     if (milestoneType === "milestonesDate") return anniversaryRows();
     if (milestoneType === "wIncrease") return wIncreaseRows();
+    // Pictures: current employees hired/onboarded within the dates.
+    if (milestoneType === "pictures") {
+      return employees
+        .filter((e) => e.dateHired && inRange(e.dateHired, startDate, endDate) && separationDate(e) === null)
+        .map((e) => toFilterRow(e, e.dateHired!));
+    }
     return regularMilestoneRows(milestoneType);
   })().sort((a, b) => (a.date < b.date ? -1 : 1));
 
@@ -2681,6 +2710,19 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                 >
                   W/Increase
                 </button>
+                <button
+                  onClick={() => {
+                    setShowGrocery(false);
+                    setMilestoneType("pictures");
+                  }}
+                  className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                    !showGrocery && milestoneType === "pictures"
+                      ? "bg-surface text-accent shadow-sm"
+                      : "text-ink-muted hover:text-ink"
+                  }`}
+                >
+                  Pictures
+                </button>
               </div>
             )}
           </div>
@@ -2718,7 +2760,7 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                 {ddmmyyyy(endDate)} — {spelledOut(endDate)}
               </span>
             </label>
-            {isMilestoneView && (
+            {isMilestoneView && milestoneType !== "pictures" && (
               <Button
                 onClick={handleExport}
                 disabled={exporting}
@@ -2781,6 +2823,9 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                       <section key={kind}>
                         <h3 className="text-sm font-semibold text-ink">
                           {MILESTONE_LABELS[kind]} – Total: {list.length} Employee{list.length === 1 ? "" : "s"}
+                          {kind === "birthday" && list.some((r) => r.team === SIMONDS_PAMPANGA) && (
+                            <span className="ml-2 text-xs font-normal text-sky-500">Blue = Team Simonds Pampanga</span>
+                          )}
                         </h3>
                         {list.length === 0 ? (
                           <div className="mt-2 rounded-lg border border-dashed border-border p-4 text-center text-sm text-ink-muted">
@@ -2806,7 +2851,15 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
                                 {list.map((r) => (
                                   <tr key={`${kind}-${r.id}`} className="border-t border-border">
                                     <td className="px-3 py-2 text-ink">
-                                      <Link href={`/employees/${r.id}`} className="hover:text-accent">
+                                      <Link
+                                        href={`/employees/${r.id}`}
+                                        className={
+                                          kind === "birthday" && r.team === SIMONDS_PAMPANGA
+                                            ? "font-semibold text-sky-500 hover:text-accent"
+                                            : "hover:text-accent"
+                                        }
+                                        title={kind === "birthday" && r.team === SIMONDS_PAMPANGA ? SIMONDS_PAMPANGA : undefined}
+                                      >
                                         {r.name}
                                       </Link>
                                       <RelieverTag tag={r.relieverTag} absorbedDate={r.absorbedDate} />
@@ -2841,7 +2894,12 @@ function AdvancedFilterView({ employees }: { employees: Employee[] }) {
               )}
 
               {isMilestoneView && milestoneType === "milestonesDate" ? null : isMilestoneView &&
-                milestoneType === "wIncrease" ? (
+                milestoneType === "pictures" ? (
+                <PicturesView
+                  employees={rows.map((r) => employees.find((e) => e.id === r.id)).filter((e): e is Employee => !!e)}
+                  periodLabel={periodLabel()}
+                />
+              ) : isMilestoneView && milestoneType === "wIncrease" ? (
                 <WIncreaseTable rows={rows} />
               ) : rows.length === 0 ? (
                 <div className="mt-2 rounded-lg border border-dashed border-border p-6 text-center text-sm text-ink-muted">

@@ -2,8 +2,11 @@
 
 export type RangePreset = "day" | "week" | "month" | "year" | "custom";
 
+/** The calendar date in this computer's time zone. (toISOString would give the UTC date,
+ *  which in the Philippines turns the 1st of a month into the last day of the one before.) */
 export function dayISO(d: Date): string {
-  return d.toISOString().slice(0, 10);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 export function rangeFor(preset: RangePreset, base: Date): { start: string; end: string } {

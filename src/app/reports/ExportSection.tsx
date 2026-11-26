@@ -1,88 +1,163 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { format } from "date-fns";
-import { useSupabaseStore, getStoreSnapshot } from "@/lib/useSupabaseStore";
+import { useSupabaseStore } from "@/lib/useSupabaseStore";
 import { Button, Card, Input } from "@/components/ui";
-import { formatDate, formatTime12 } from "@/lib/dates";
+import { formatDate } from "@/lib/dates";
 import { inRange, rangeFor } from "@/lib/dateRanges";
 import { useNotifications } from "@/lib/notificationContext";
-import { NOT_SET_LABEL } from "@/lib/milestoneNotes";
+import { countableEmployees, hasLeft, resignedCoeIndex, separationReason } from "@/lib/employeeStatus";
+import { NO_CLIENT, TEAM_CLIENTS_KEY, type TeamClient, clientOf, teamClientMap, teamOf } from "@/lib/groceryPackage";
 import { sixthMonthRows } from "./SixthMonthReport";
-import type {
-  ER2ReportRow,
-  EventReportRow,
-  CustomReportTable,
-  COERequest,
-  Employee,
-  ER2Form,
-  ER2Template,
-} from "@/types";
-import { EVENT_STATUS_LABELS } from "@/types";
+import type { COERequest, Employee, ER2Form } from "@/types";
 
-const HEADER_FILL = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0E5E56" } } as const;
+type Report = { key: string; title: string; sheet: string; columns: { header: string; width: number }[]; rows: string[][] };
+
+const day = (iso?: string) => (iso ? formatDate(iso, "MMMM d, yyyy") : "");
+const nameKey = (name: string) => name.trim().toLowerCase();
 
 /**
- * Export every report table — including both COE tables — for a chosen date coverage.
- * Rows are matched on the date that identifies the record: date created for ER2,
- * date of regularization, event date, plan start date, and date requested for COE.
+ * Reports by date: pick a Start and End date and see, for that coverage, the ER2 forms,
+ * COEs with Purpose and for Resigned, New Hires and 6th-Month milestones — and export the
+ * same five lists to Excel, one sheet each.
  */
 export function ReportExportSection() {
-  const today = new Date();
-  const monthRange = rangeFor("month", today);
-
+  const monthRange = rangeFor("month", new Date());
   const { items: coeRequests } = useSupabaseStore<COERequest>("hr_coe_requests", []);
-  const { items: er2Rows } = useSupabaseStore<ER2ReportRow>("hr_report_er2", []);
-  const { items: eventRows } = useSupabaseStore<EventReportRow>("hr_report_events", []);
-  const { items: customTables } = useSupabaseStore<CustomReportTable>("hr_report_custom_tables", []);
   const { items: employees } = useSupabaseStore<Employee>("hr_employees", []);
   const { items: er2Forms } = useSupabaseStore<ER2Form>("hr_er2_forms", []);
-  // Only its file name is ever read here, and only once someone actually exports — not
-  // worth pulling the template's base64 body down on every visit to Reports for that.
-  const { reload: reloadEr2Template } = useSupabaseStore<ER2Template>("hr_er2_template", [], {
-    autoLoad: false,
-  });
+  const { items: savedClients } = useSupabaseStore<TeamClient>(TEAM_CLIENTS_KEY, []);
   const { notify } = useNotifications();
 
   const [startDate, setStartDate] = useState(monthRange.start);
   const [endDate, setEndDate] = useState(monthRange.end);
   const [exporting, setExporting] = useState(false);
 
-  const coeWithPurpose = coeRequests.filter(
-    (r) => r.category !== "endOfEmployment" && inRange(r.dateRequested, startDate, endDate)
-  );
-  const coeResigned = coeRequests.filter(
-    (r) => r.category === "endOfEmployment" && inRange(r.dateRequested, startDate, endDate)
-  );
-  const er2 = er2Rows.filter((r) => inRange(r.dateCreated, startDate, endDate));
-  const events = eventRows.filter((r) => inRange(r.date, startDate, endDate));
-  const sixthMonth = sixthMonthRows(employees, startDate, endDate);
-  // An ER2 form counts as in-coverage when its own coverage overlaps the export range.
-  const matchingEr2Forms = er2Forms.filter(
-    (f) => f.coverageStart <= endDate && f.coverageEnd >= startDate
-  );
-  const customRowCount = customTables.reduce((n, t) => n + t.rows.length, 0);
+  const reports: Report[] = useMemo(() => {
+    const byName = new Map(employees.map((e) => [nameKey(e.name || ""), e]));
+    const coeIndex = resignedCoeIndex(coeRequests);
+    const clients = teamClientMap(savedClients);
 
-  const totalRows =
-    coeWithPurpose.length +
-    coeResigned.length +
-    er2.length +
-    sixthMonth.length +
-    events.length;
+    // ER2: everyone on a form whose coverage overlaps the range, each name once.
+    const seen = new Set<string>();
+    const er2: string[][] = [];
+    er2Forms
+      .filter((f) => f.coverageStart.slice(0, 10) <= endDate && f.coverageEnd.slice(0, 10) >= startDate)
+      .forEach((f) =>
+        f.entries.forEach((en) => {
+          const k = nameKey(en.name || "");
+          if (!k || seen.has(k)) return;
+          seen.add(k);
+          er2.push([en.name, en.position || byName.get(k)?.position || ""]);
+        })
+      );
+
+    const inRangeCoe = coeRequests.filter((r) => inRange(r.dateRequested, startDate, endDate));
+    const purpose = inRangeCoe
+      .filter((r) => r.category !== "endOfEmployment")
+      .map((r) => [r.employeeName, day(r.dateRequested), day(r.dateGiven), r.purpose || ""]);
+    const resigned = inRangeCoe
+      .filter((r) => r.category === "endOfEmployment")
+      .map((r) => {
+        const e = byName.get(nameKey(r.employeeName));
+        return [
+          r.employeeName,
+          r.position || e?.position || "",
+          r.department || e?.department || "",
+          day(r.dateGiven),
+          e ? separationReason(e, coeIndex) : "",
+          day(e?.lastDay),
+        ];
+      });
+
+    const newHires = countableEmployees(employees)
+      .filter((e) => e.dateHired && inRange(e.dateHired, startDate, endDate) && !hasLeft(e))
+      .sort((a, b) => (a.dateHired! < b.dateHired! ? -1 : 1))
+      .map((e) => {
+        const client = clientOf(e, clients);
+        return [e.name, e.position || "", e.department || "", client === NO_CLIENT ? "" : client, day(e.dateHired)];
+      });
+
+    const byId = new Map(employees.map((e) => [e.id, e]));
+    const sixth = sixthMonthRows(countableEmployees(employees), startDate, endDate).map((r) => {
+      const e = byId.get(r.id);
+      return [r.name, r.position, r.department, (e && teamOf(e)?.team) || "", day(r.sixthMonth)];
+    });
+
+    return [
+      {
+        key: "er2",
+        title: "ER2 Form (PhilHealth Template)",
+        sheet: "ER2 Form",
+        columns: [{ header: "Employee Name", width: 34 }, { header: "Position", width: 34 }],
+        rows: er2,
+      },
+      {
+        key: "purpose",
+        title: "COE with Purpose",
+        sheet: "COE with Purpose",
+        columns: [
+          { header: "Employee Name", width: 32 },
+          { header: "Date Requested", width: 20 },
+          { header: "Date Issued", width: 20 },
+          { header: "Purpose", width: 36 },
+        ],
+        rows: purpose,
+      },
+      {
+        key: "resigned",
+        title: "COE for Resigned Employees",
+        sheet: "COE for Resigned",
+        columns: [
+          { header: "Employee Name", width: 30 },
+          { header: "Position", width: 28 },
+          { header: "Department", width: 20 },
+          { header: "Date Issued", width: 20 },
+          { header: "Reason for Resignation", width: 32 },
+          { header: "Resignation Date", width: 20 },
+        ],
+        rows: resigned,
+      },
+      {
+        key: "newHires",
+        title: "New Hires",
+        sheet: "New Hires",
+        columns: [
+          { header: "Employee Name", width: 30 },
+          { header: "Position", width: 28 },
+          { header: "Department", width: 20 },
+          { header: "Client", width: 22 },
+          { header: "Hire/Onboarding Date", width: 22 },
+        ],
+        rows: newHires,
+      },
+      {
+        key: "sixth",
+        title: "Employee 6th-Month Report",
+        sheet: "6th-Month Report",
+        columns: [
+          { header: "Name", width: 30 },
+          { header: "Position", width: 28 },
+          { header: "Department", width: 20 },
+          { header: "Team", width: 34 },
+          { header: "6th-Month Date", width: 20 },
+        ],
+        rows: sixth,
+      },
+    ];
+  }, [coeRequests, employees, er2Forms, savedClients, startDate, endDate]);
 
   function coverageLabel(): string {
-    const s = new Date(startDate);
-    const e = new Date(endDate);
-    // A whole calendar month reads as "September 2026", a single day as one date.
+    const s = new Date(`${startDate}T00:00:00`);
+    const e = new Date(`${endDate}T00:00:00`);
     if (startDate === endDate) return format(s, "MMMM d, yyyy");
-    const monthStart = new Date(s.getFullYear(), s.getMonth(), 1);
-    const monthEnd = new Date(s.getFullYear(), s.getMonth() + 1, 0);
-    if (
-      s.getTime() === monthStart.getTime() &&
-      format(e, "yyyy-MM-dd") === format(monthEnd, "yyyy-MM-dd")
-    ) {
-      return format(s, "MMMM yyyy");
-    }
+    const wholeMonth =
+      s.getDate() === 1 &&
+      s.getMonth() === e.getMonth() &&
+      s.getFullYear() === e.getFullYear() &&
+      e.getDate() === new Date(e.getFullYear(), e.getMonth() + 1, 0).getDate();
+    if (wholeMonth) return format(s, "MMMM yyyy");
     const sameMonth = s.getMonth() === e.getMonth() && s.getFullYear() === e.getFullYear();
     return sameMonth
       ? `${format(s, "MMMM d")}–${format(e, "d, yyyy")}`
@@ -92,232 +167,43 @@ export function ReportExportSection() {
   async function handleExport() {
     setExporting(true);
     try {
-      // Fetched here rather than kept loaded the whole time this page is open — see the
-      // reload() above.
-      await reloadEr2Template();
-      const er2Templates = getStoreSnapshot<ER2Template>("hr_er2_template");
       const ExcelJS = (await import("exceljs")).default;
       const wb = new ExcelJS.Workbook();
-
-      type Sheet = ReturnType<InstanceType<typeof ExcelJS.Workbook>["addWorksheet"]>;
-
-      // Excel rejects duplicate sheet names, which two custom tables sharing a title would hit.
-      const usedNames = new Set<string>();
-      function uniqueSheetName(name: string): string {
-        const base = (name || "Table").slice(0, 31);
-        if (!usedNames.has(base)) {
-          usedNames.add(base);
-          return base;
-        }
-        for (let i = 2; ; i++) {
-          const candidate = `${base.slice(0, 31 - `${i}`.length - 1)} ${i}`;
-          if (!usedNames.has(candidate)) {
-            usedNames.add(candidate);
-            return candidate;
-          }
-        }
-      }
-
-      function addSheet(name: string, widths: number[], title: string, headers: string[]): Sheet {
-        const s = wb.addWorksheet(uniqueSheetName(name));
-        s.columns = widths.map((width) => ({ width }));
-        const t = s.addRow([title]);
-        t.getCell(1).font = { bold: true, size: 12 };
-        s.addRow([`Coverage: ${coverageLabel()}`]);
-        s.addRow([]);
-        const h = s.addRow(headers);
-        h.eachCell((c) => {
+      const solid = (argb: string) => ({ type: "pattern" as const, pattern: "solid" as const, fgColor: { argb } });
+      for (const r of reports) {
+        const ws = wb.addWorksheet(r.sheet);
+        const cols = [{ header: "No.", width: 7 }, ...r.columns];
+        ws.columns = cols.map((c) => ({ width: c.width }));
+        const title = ws.addRow([`${r.title} – ${coverageLabel()}`]);
+        ws.mergeCells(title.number, 1, title.number, cols.length);
+        title.getCell(1).font = { bold: true, size: 13, color: { argb: "FF0A2E2A" } };
+        title.getCell(1).fill = solid("FFE4F0EE");
+        title.getCell(1).alignment = { horizontal: "center", vertical: "middle" };
+        const head = ws.addRow(cols.map((c) => c.header));
+        head.eachCell((c) => {
           c.font = { bold: true, color: { argb: "FFFFFFFF" } };
-          c.fill = { ...HEADER_FILL };
+          c.fill = solid("FF0E5E56");
         });
-        return s;
-      }
-
-      /** Blank row, then a bold "Total: 5 Employees" under the sheet's table. */
-      function addTotal(s: Sheet, count: number, noun: string) {
-        s.addRow([]);
-        const total = s.addRow([`Total: ${count} ${count === 1 ? noun : `${noun}s`}`]);
+        r.rows.forEach((row, i) => ws.addRow([i + 1, ...row]));
+        ws.addRow([]);
+        const total = ws.addRow([`Total: ${r.rows.length}`]);
         total.getCell(1).font = { bold: true };
+        total.getCell(1).fill = solid("FFFFFF00");
+        total.getCell(2).fill = solid("FFFFFF00");
       }
-
-      const summary = wb.addWorksheet("Summary");
-      summary.columns = [{ width: 36 }, { width: 16 }];
-      const heading = summary.addRow([`Reports — ${coverageLabel()}`]);
-      heading.getCell(1).font = { bold: true, size: 14 };
-      summary.addRow([`Date coverage`, `${startDate} to ${endDate}`]);
-      summary.addRow([]);
-      [
-        ["COE with Purpose", coeWithPurpose.length],
-        ["COE for Resigned Employees", coeResigned.length],
-        ["ER2 Form for PhilHealth", er2.length],
-        ["Employee 6th-Month", sixthMonth.length],
-        ["ER2 forms in coverage", matchingEr2Forms.length],
-        ["Events Attended", events.length],
-        ["Custom table rows (all dates)", customRowCount],
-      ].forEach(([label, count]) => summary.addRow([label, count]));
-
-      const coeHeaders = ["Employee Name", "Position", "Department", "Email Address", "Date Requested", "Purpose", "Date Issued"];
-      const coeWidths = [26, 24, 20, 28, 18, 26, 18];
-
-      function coeRow(r: COERequest) {
-        return [
-          r.employeeName,
-          r.position,
-          r.department,
-          r.email || employees.find((e) => e.name.trim().toLowerCase() === r.employeeName.trim().toLowerCase())?.realcognitaEmail || "",
-          formatDate(r.dateRequested, "MMMM d, yyyy"),
-          r.category === "endOfEmployment" ? "Resigned" : r.purpose || "—",
-          r.dateGiven ? formatDate(r.dateGiven, "MMMM d, yyyy") : "—",
-        ];
-      }
-
-      if (coeWithPurpose.length > 0) {
-        const s = addSheet("COE with Purpose", coeWidths, "COE with Purpose", coeHeaders);
-        coeWithPurpose.forEach((r) => s.addRow(coeRow(r)));
-        addTotal(s, coeWithPurpose.length, "Employee");
-      }
-      if (coeResigned.length > 0) {
-        const s = addSheet("COE for Resigned", coeWidths, "COE for Resigned Employees", coeHeaders);
-        coeResigned.forEach((r) => s.addRow(coeRow(r)));
-        addTotal(s, coeResigned.length, "Employee");
-      }
-      if (er2.length > 0) {
-        const s = addSheet(
-          "ER2 Form for PhilHealth",
-          [26, 24, 20, 18],
-          "ER2 Form for PhilHealth Report",
-          ["Employee Name", "Position", "Department", "Date Created"]
-        );
-        er2.forEach((r) =>
-          s.addRow([r.employeeName, r.position, r.department, formatDate(r.dateCreated, "MMMM d, yyyy")])
-        );
-        addTotal(s, er2.length, "Employee");
-      }
-      if (matchingEr2Forms.length > 0) {
-        const s = wb.addWorksheet(uniqueSheetName("ER2 Form (PhilHealth)"));
-        s.columns = [{ width: 26 }, { width: 30 }, { width: 26 }, { width: 14 }, { width: 22 }, { width: 26 }];
-        const t = s.addRow(["ER2 Form for PhilHealth — completed forms"]);
-        t.getCell(1).font = { bold: true, size: 12 };
-        s.addRow([`Coverage: ${coverageLabel()}`]);
-        const templateFile = er2Templates[0]?.fileName;
-        s.addRow([
-          "Template on file",
-          templateFile || "None uploaded — the completed PDF is generated from the uploaded ER2 template",
-        ]);
-
-        matchingEr2Forms.forEach((formRecord) => {
-          s.addRow([]);
-          const head = s.addRow([formRecord.title]);
-          head.getCell(1).font = { bold: true, color: { argb: "FF0A2E2A" } };
-          head.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE4F0EE" } };
-          s.addRow(["Coverage", `${formRecord.coverageStart} to ${formRecord.coverageEnd}`]);
-          s.addRow([]);
-          const h = s.addRow([
-            "PhilHealth SSS/GSIS Number",
-            "Name of Employee",
-            "Position",
-            "Salary",
-            "Date of Employment",
-          ]);
-          h.eachCell((c) => {
-            c.font = { bold: true, color: { argb: "FFFFFFFF" } };
-            c.fill = { ...HEADER_FILL };
-          });
-          formRecord.entries.forEach((entry) =>
-            s.addRow([
-              entry.philhealthNo,
-              entry.name,
-              entry.position,
-              entry.salary,
-              entry.dateOfEmployment,
-            ])
-          );
-          s.addRow([]);
-          const total = s.addRow([
-            `Total: ${formRecord.entries.length} ${formRecord.entries.length === 1 ? "Employee" : "Employees"}`,
-          ]);
-          total.getCell(1).font = { bold: true };
-        });
-      }
-      if (sixthMonth.length > 0) {
-        const s = addSheet(
-          "Employee 6th-Month",
-          [26, 24, 20, 18, 24, 18],
-          "Employee 6th-Month Report",
-          [
-            "Employee Name",
-            "Position",
-            "Department",
-            "Salary Status",
-            "Salary Increase Percentage",
-            "6th Month Date",
-          ]
-        );
-        sixthMonth.forEach((r) => {
-          const employee = employees.find((e) => e.id === r.id);
-          const review = employee?.sixthMonthSalaryReview;
-          const percent = (employee?.regularizationIncreasePercent || "").trim();
-          s.addRow([
-            r.name,
-            r.position,
-            r.department,
-            review === "withIncrease"
-              ? "With Increase"
-              : review === "asIs"
-                ? "As Is Salary"
-                : NOT_SET_LABEL,
-            review === "withIncrease" ? (percent ? `${percent}%` : "") : review === "asIs" ? "N/A" : "",
-            formatDate(r.sixthMonth, "MMMM d, yyyy"),
-          ]);
-        });
-        addTotal(s, sixthMonth.length, "Employee");
-      }
-      if (events.length > 0) {
-        const s = addSheet("Events Attended", [28, 18, 14, 14, 26, 14], "Events Attended Report", [
-          "Event Name",
-          "Date",
-          "Start Time",
-          "End Time",
-          "Location",
-          "Status",
-        ]);
-        events.forEach((r) =>
-          s.addRow([
-            r.eventName,
-            formatDate(r.date, "MMMM d, yyyy"),
-            formatTime12(r.time),
-            formatTime12(r.endTime || ""),
-            r.location,
-            r.status ? EVENT_STATUS_LABELS[r.status] : "",
-          ])
-        );
-        addTotal(s, events.length, "Event");
-      }
-      customTables.forEach((ct) => {
-        if (ct.rows.length === 0) return;
-        const s = addSheet(
-          ct.title || "Custom Table",
-          ct.columns.map(() => 22),
-          ct.title,
-          ct.columns
-        );
-        ct.rows.forEach((row) => s.addRow(ct.columns.map((col) => row[col] || "")));
-        addTotal(s, ct.rows.length, "Record");
-      });
-
       const buffer = await wb.xlsx.writeBuffer();
-      const blob = new Blob([buffer], {
-        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      });
+      const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `HR Reports - ${coverageLabel()}.xlsx`;
+      a.download = `Reports - ${coverageLabel()}.xlsx`;
       document.body.appendChild(a);
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-      notify("Reports exported to Excel", "created");
+      notify(`Exported reports for ${coverageLabel()}`, "created");
+    } catch (err) {
+      notify(`Could not export: ${err instanceof Error ? err.message : "Unknown error"}`, "warn");
     } finally {
       setExporting(false);
     }
@@ -325,44 +211,66 @@ export function ReportExportSection() {
 
   return (
     <Card>
-      <h2 className="font-display text-lg text-ink">Export to Excel</h2>
+      <h2 className="font-display text-lg text-ink">Reports by Date</h2>
       <p className="mt-1 text-xs text-ink-muted">
-        Pick a start and end date, then export every report table above — both COE tables included — into one
-        Excel file.
+        Pick a date coverage to see these five reports for it, and export them to Excel — one sheet each.
       </p>
-
-      <div className="mt-3 flex flex-wrap items-end gap-3">
+      <div className="mt-4 flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-1 text-xs text-ink-muted">
           Start date
-          <Input
-            type="date"
-            value={startDate}
-            onChange={(e) => setStartDate(e.target.value)}
-          />
+          <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
         </label>
         <label className="flex flex-col gap-1 text-xs text-ink-muted">
           End date
-          <Input
-            type="date"
-            value={endDate}
-            onChange={(e) => setEndDate(e.target.value)}
-          />
+          <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
         </label>
-        <Button onClick={handleExport} disabled={exporting || startDate > endDate} className="ml-auto">
+        <span className="mb-2 text-xs text-ink-muted">{coverageLabel()}</span>
+        <Button onClick={handleExport} disabled={exporting} className="ml-auto">
           {exporting ? "Exporting…" : "Export to Excel"}
         </Button>
       </div>
 
-      {startDate > endDate ? (
-        <p className="mt-3 text-xs text-warn">Start date must be on or before the end date.</p>
-      ) : (
-        <p className="mt-3 text-xs text-ink-muted">
-          Coverage: {coverageLabel()} — {totalRows} dated record{totalRows === 1 ? "" : "s"}
-          {customRowCount > 0 ? `, plus ${customRowCount} custom table row${customRowCount === 1 ? "" : "s"}` : ""}
-          {totalRows === 0 && customRowCount === 0 ? " (nothing to export yet)" : ""}
-        </p>
-      )}
+      <div className="mt-6 flex flex-col gap-6">
+        {reports.map((r) => (
+          <section key={r.key}>
+            <h3 className="text-sm font-semibold text-ink">
+              {r.title} – Total: {r.rows.length}
+            </h3>
+            {r.rows.length === 0 ? (
+              <div className="mt-2 rounded-lg border border-dashed border-border p-4 text-center text-sm text-ink-muted">
+                None in this date range.
+              </div>
+            ) : (
+              <div className="mt-2 overflow-x-auto rounded-lg border border-border">
+                <table className="w-full min-w-[640px] text-left text-sm">
+                  <thead>
+                    <tr className="bg-background text-xs uppercase tracking-wide text-ink-muted">
+                      <th className="px-3 py-2">No.</th>
+                      {r.columns.map((c) => (
+                        <th key={c.header} className="px-3 py-2">
+                          {c.header}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {r.rows.map((row, i) => (
+                      <tr key={i} className="border-t border-border">
+                        <td className="px-3 py-2 tabular-nums text-ink-muted">{i + 1}</td>
+                        {row.map((cell, j) => (
+                          <td key={j} className={`px-3 py-2 ${j === 0 ? "text-ink" : "text-ink-muted"}`}>
+                            {cell || "—"}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        ))}
+      </div>
     </Card>
   );
 }
-

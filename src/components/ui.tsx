@@ -373,12 +373,15 @@ export function Pill({
 export function StatCard({
   value,
   label,
+  note,
   hint,
   active = false,
   onClick,
 }: {
   value: React.ReactNode;
   label: string;
+  /** A small extra line under the label. */
+  note?: string;
   hint?: string;
   active?: boolean;
   onClick?: () => void;
@@ -390,6 +393,7 @@ export function StatCard({
     <>
       <p className="text-3xl font-semibold tabular-nums tracking-tight text-ink">{value}</p>
       <p className="mt-1 text-xs font-medium text-ink-muted">{label}</p>
+      {note && <p className="mt-1 text-[11px] text-ink-muted">{note}</p>}
       {hint && <p className="mt-2 text-xs font-medium text-accent">{hint}</p>}
     </>
   );

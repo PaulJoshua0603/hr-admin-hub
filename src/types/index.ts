@@ -287,7 +287,8 @@ export type MilestoneNote = {
     | "twoYears"
     | "threeYears"
     | "milestonesDate"
-    | "wIncrease";
+    | "wIncrease"
+    | "pictures";
   note: string;
   /** Why, when the 6th-month note is "Not Regularized". */
   reason?: string;
